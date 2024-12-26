@@ -31,7 +31,7 @@ Paneity allows you to attach to an existing pane or open a new one.
 ### Using lazy.nvim
 ```lua
 {
-  "bestie/paneity",
+  "bestie/paneity.nvim",
   config = function()
     require("paneity").setup()
   end,
