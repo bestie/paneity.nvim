@@ -7,7 +7,7 @@ local function log(string)
     return
   end
 
-  local file = io.open("paneity.log", "a")
+  local file = io.open("/tmp/paneity.log", "a")
   file:write(string .. "\n")
   file:close()
 end
@@ -29,9 +29,8 @@ local function shell_exec(command)
 end
 
 local function send_command(target_pane_id, keys)
-  -- C-a C-k ensures any existing input is cleared without killing the current prompt or ringing the bell
-  -- C-m is another readline binding for ENTER
-  shell_exec(string.format("tmux send-keys -t %s C-a C-k '%s' C-m", target_pane_id, keys))
+  shell_exec(string.format("tmux send-keys -t %s C-c", target_pane_id))
+  shell_exec(string.format("tmux send-keys -t %s '%s' C-m", target_pane_id, keys))
 end
 
 local pane_list_format = "#{pane_index}:#{pane_id}:#{pane_pid}:#{pane_current_command}"
@@ -55,10 +54,10 @@ end
 
 local function get_pane_info_by_id(pane_id)
   local all_panes = get_pane_info()
-  log("looking for current pane: " .. vim.inspect(M.target_pane_id))
+  log("looking for current pane: " .. vim.inspect(pane_id))
   for _, pane in ipairs(all_panes) do
     log("checking pane: " .. vim.inspect(pane))
-    if pane["id"] == M.target_pane_id then
+    if pane["id"] == pane_id then
       return pane
     end
   end
@@ -123,39 +122,55 @@ local function open_new_pane()
   return pane_id
 end
 
-local function choose_tmux_pane()
-  local current_pane_id = os.getenv("TMUX_PANE")
-  local panes = get_pane_info()
-  log("Panes: " .. vim.inspect(panes))
+local function fzf_selection_ui(fzf, menu_items, on_selection)
+  log("FZF: " .. vim.inspect(menu_items))
 
-  local menu_items = {
-    "0 - New Pane (or ENTER)",
-  }
-
-  for _, pane in ipairs(panes) do
-    if pane.id ~= current_pane_id then
-      table.insert(menu_items, string.format("%s - Pane ID: %s, Process: %s", pane.index, pane.id, pane.command))
-      unmark_pane(pane.id)
-    end
+  local selection
+  local capture_selection = function(captured)
+    selection = captured
   end
 
-  local selection = 0
+  fzf.fzf_exec(menu_items, {
+    prompt = "Select a target pane > ",
+    fzf_opts = {
+      ["--cycle"] = true,
+    },
+    winopts = {
+      height = #menu_items + 3,
+      row = 1,    -- bottom
+      col = 4,    -- characters
+      width = 50, -- characters
+    },
+    actions = {
+      ["default"] = function(selected)
+        if selected and #selected > 0 then
+          on_selection(selected[1])
+        end
+      end,
+    },
+  })
 
-  if #menu_items > 0 then
-    selection = vim.fn.inputlist(menu_items)
-  end
+  return selection
+end
 
+M.set_target_pane_id = function(pane_id)
+  M.target_pane_id = pane_id
+  mark_pane(M.target_pane_id, M.config.marker)
+end
+
+local function pane_was_selected(selection)
   log("Selection: " .. vim.inspect(selection))
 
-  local target_pane_id = nil
+  local target_pane_id
+  local panes = get_pane_info()
+  local selected_pane_index = tonumber(vim.split(selection, ":")[1]) or 0
 
-  if selection == 0 then
+  if selected_pane_index == 0 then
     log("creating new pane")
-
     target_pane_id = open_new_pane()
-  elseif selection > 1 then
+  elseif selected_pane_index > 1 then
     log("picking existing pane" .. selection)
-    target_pane_id = panes[selection]["id"]
+    target_pane_id = panes[selected_pane_index]["id"]
   else
     log("ooops" .. selection)
   end
@@ -166,7 +181,38 @@ local function choose_tmux_pane()
     print_error("could not set target pane")
   end
 
-  return target_pane_id
+  if target_pane_id then
+    M.set_target_pane_id(target_pane_id)
+    print_message("enabled ✅")
+  else
+    print_error("error selecting pane 🍞🥖")
+  end
+end
+
+local function choose_tmux_pane()
+  local current_pane_id = os.getenv("TMUX_PANE")
+  local panes = get_pane_info()
+  log("Panes: " .. vim.inspect(panes))
+
+  local menu_items = {
+    "0: New Pane (default))",
+  }
+
+  for _, pane in ipairs(panes) do
+    if pane.id ~= current_pane_id then
+      table.insert(menu_items, string.format("%s: ID: %s running: %s", pane.index, pane.id, pane.command))
+      unmark_pane(pane.id)
+    end
+  end
+
+  if #menu_items > 1 then
+    local fzf = require("fzf-lua")
+    fzf_selection_ui(fzf, menu_items, pane_was_selected)
+    log("loading fzf")
+  else
+    local new_pane_id = open_new_pane()
+    M.set_target_pane_id(new_pane_id)
+  end
 end
 
 local function get_tmux_info()
@@ -225,8 +271,7 @@ function M.set_target_pane()
     unmark_pane(pane.id)
   end
 
-  M.target_pane_id = choose_tmux_pane()
-  mark_pane(M.target_pane_id, M.config.marker)
+  choose_tmux_pane()
 end
 
 function M.repeat_command()
@@ -248,7 +293,8 @@ function M.new_command()
 end
 
 function M.up_enter()
-  shell_exec(string.format("tmux send-keys -t%s C-c Up ENTER", M.target_pane_id))
+  shell_exec(string.format("tmux send-keys -t%s C-c", M.target_pane_id))
+  shell_exec(string.format("tmux send-keys -t%s Up ENTER", M.target_pane_id))
 end
 
 function M.page_up()
