@@ -249,6 +249,11 @@ end
 
 -- Public functions ------------------------------------------------------------
 
+function M.run(command)
+  send_to_tmux_pane(M.target_pane_id, command)
+  M.previous_command = command
+end
+
 function M.toggle()
   if M.target_pane_id then
     unmark_pane(M.target_pane_id)
@@ -285,8 +290,7 @@ end
 function M.new_command()
   if M.target_pane_id then
     local user_command = vim.fn.input("Command to run: ")
-    send_to_tmux_pane(M.target_pane_id, user_command)
-    M.previous_command = user_command
+    M.run(user_command)
   else
     print_error("no target pane set.")
   end
