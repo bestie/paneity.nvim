@@ -287,10 +287,23 @@ function M.repeat_command()
   end
 end
 
-function M.new_command()
+function M.new_command(opts)
+  opts = vim.tbl_deep_extend("force", {
+    prompt = "Command to run: ",
+    prefill = "",
+    post_exec = false
+  }, opts or {})
+
   if M.target_pane_id then
-    local user_command = vim.fn.input("Command to run: ")
-    M.run(user_command)
+    vim.ui.input({ prompt = opts.prompt, default = opts.prefill }, function(command)
+      if command then
+        print_message("Running command: " .. command)
+        M.run(command)
+        if opts.post_exec then
+          opts.post_exec(command)
+        end
+      end
+    end)
   else
     print_error("no target pane set.")
   end
