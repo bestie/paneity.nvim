@@ -122,18 +122,22 @@ local function open_new_pane()
   return pane_id
 end
 
-local function fzf_selection_ui(fzf, menu_items, on_selection)
+local function fzf_selection_ui(prompt, menu_items, on_selection)
+  local fzf = require("fzf-lua")
   log("FZF: " .. vim.inspect(menu_items))
 
   local selection
-  local capture_selection = function(captured)
-    selection = captured
+
+  -- move the "New pane" option to the end of the list
+  if menu_items[1] == "New pane" then
+    local new_pane_item = table.remove(menu_items, 1)
+    table.insert(menu_items, new_pane_item)
   end
 
   fzf.fzf_exec(menu_items, {
-    prompt = "Select a target pane > ",
+    prompt = prompt,
     fzf_opts = {
-      ["--cycle"] = true,
+      ["--bind"] = "start:down",  -- doesn't work, bind option not passed through
     },
     winopts = {
       height = #menu_items + 3,
@@ -153,39 +157,50 @@ local function fzf_selection_ui(fzf, menu_items, on_selection)
   return selection
 end
 
+local function native_selection_ui(prompt, menu_items, on_selection)
+  log("Native selection: " .. vim.inspect(menu_items))
+
+  -- prepend items with index
+  for i, item in ipairs(menu_items) do
+    menu_items[i] = string.format("%d) %s", i - 1, item)
+  end
+
+  table.insert(menu_items, 1, prompt)
+
+  local selection = vim.fn.inputlist(menu_items)
+  on_selection(menu_items[selection+2])
+end
+
 M.set_target_pane_id = function(pane_id)
   M.target_pane_id = pane_id
   mark_pane(M.target_pane_id, M.config.marker)
 end
 
 local function pane_was_selected(selection)
+  local target_pane = nil
+
   log("Selection: " .. vim.inspect(selection))
 
-  local target_pane_id
-  local panes = get_pane_info()
-  local selected_pane_index = tonumber(vim.split(selection, ":")[1]) or 0
+  -- extract pane ID from the selection string
+  local selected_pane_id = selection:match("ID:(%S+)")
+  log("selected_pane_id: " .. vim.inspect(selected_pane_id))
 
-  if selected_pane_index == 0 then
-    log("creating new pane")
-    target_pane_id = open_new_pane()
-  elseif selected_pane_index > 1 then
-    log("picking existing pane" .. selection)
-    target_pane_id = panes[selected_pane_index]["id"]
+  if selected_pane_id then
+    target_pane = get_pane_info_by_id(selected_pane_id)
+    log("target_pane: " .. vim.inspect(target_pane))
   else
-    log("ooops" .. selection)
+    local new_pane_id = open_new_pane()
+    target_pane = get_pane_info_by_id(new_pane_id)
+    log("New pane created: " .. vim.inspect(target_pane))
   end
 
-  log("new_target_pane ID " .. vim.inspect(target_pane_id))
-
-  if not target_pane_id then
-    print_error("could not set target pane")
-  end
-
-  if target_pane_id then
-    M.set_target_pane_id(target_pane_id)
-    print_message("enabled ✅")
+  if target_pane then
+    M.set_target_pane_id(target_pane.id)
+    print_message("enabled ✅ 👉 " .. target_pane.id)
+    log("enabled ✅ 👉 " .. target_pane.id)
   else
     print_error("error selecting pane 🍞🥖")
+    log("error selecting pane 🍞🥖")
   end
 end
 
@@ -194,21 +209,26 @@ local function choose_tmux_pane()
   local panes = get_pane_info()
   log("Panes: " .. vim.inspect(panes))
 
-  local menu_items = {
-    "0: New Pane (default))",
-  }
+  local menu_items = { }
+
+  table.insert(menu_items, "New pane")
 
   for _, pane in ipairs(panes) do
     if pane.id ~= current_pane_id then
-      table.insert(menu_items, string.format("%s: ID: %s running: %s", pane.index, pane.id, pane.command))
+      table.insert(menu_items, string.format("Pane:%s ID:%s running: %s", pane.index, pane.id, pane.command))
       unmark_pane(pane.id)
     end
   end
 
   if #menu_items > 1 then
-    local fzf = require("fzf-lua")
-    fzf_selection_ui(fzf, menu_items, pane_was_selected)
-    log("loading fzf")
+    prompt = "Select a target pane > "
+
+    local ok, fzf = pcall(require, "fzf-lua")
+    if ok then
+      fzf_selection_ui(prompt, menu_items, pane_was_selected)
+    else
+      native_selection_ui(prompt, menu_items, pane_was_selected)
+    end
   else
     local new_pane_id = open_new_pane()
     M.set_target_pane_id(new_pane_id)
