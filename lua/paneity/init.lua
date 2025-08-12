@@ -274,6 +274,21 @@ function M.run(command)
   M.previous_command = command
 end
 
+function M.status_line()
+  if not get_tmux_info() then
+    return ""
+  end
+
+  local string = "🥖"
+  if M.target_pane_id then
+    string = string .. " [" .. M.target_pane_id .. "]"
+  else
+    string = string .. "[💤]"
+  end
+
+  return string
+end
+
 function M.toggle()
   if M.target_pane_id then
     unmark_pane(M.target_pane_id)
