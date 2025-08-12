@@ -3,7 +3,7 @@ local M = {}
 M.version = "0.0.1"
 
 local function log(string)
-  if not vim.g.paneity_debug then
+  if M.config.log_level == vim.log.levels.OFF then
     return
   end
 
@@ -324,7 +324,8 @@ end
 
 -- Setup and configuration -----------------------------------------------------
 
-local defaults = {
+M.defaults = {
+  log_level = vim.log.levels.OFF,
   marker = "🥖🕹️",
   split_direction = nil,
   split_size = nil,
@@ -339,8 +340,8 @@ local defaults = {
   }
 }
 
-local function merge_config(user_config)
-  return vim.tbl_deep_extend("force", defaults, user_config or {})
+local function merge_defaults(user_config)
+  return vim.tbl_deep_extend("force", M.defaults, user_config or {})
 end
 
 local function setup_keybindings(bindings)
@@ -381,18 +382,18 @@ local function register_cleanup()
 end
 
 function M.setup(user_config)
-  log("Paneity setup")
   -- retain some state
   M.target_pane_id = M.target_pane_id or nil
   M.previous_command = M.previous_command or ""
 
-  local config = merge_config(user_config)
+  local config = merge_defaults(user_config)
 
   if config["keybindings"] ~= false then
     setup_keybindings(config.keybindings)
   end
 
   M.config = config
+  log("configuration: " .. vim.inspect(config))
 
   register_cleanup()
 end
