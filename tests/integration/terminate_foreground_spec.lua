@@ -80,4 +80,69 @@ describe("terminate_foreground", function()
     assert.is_true(saw_marker,
       "expected PANEITY_OK in pane content within 2s; got:\n" .. capture_pane(pane_id))
   end)
+
+  it("escalates to SIGQUIT when the foreground process ignores SIGINT", function()
+    -- Lua script run via `nvim -l` — nvim is already on PATH via mise, so we
+    -- don't need any extra runtime. pane_current_command will be `nvim`,
+    -- which is not in SHELLS, so terminate_foreground engages the ladder.
+    local script_path = tmux_tmpdir .. "/blocker.lua"
+    local sig_log = tmux_tmpdir .. "/signals.log"
+
+    local fd = assert(io.open(script_path, "w"))
+    fd:write(table.concat({
+      "local sig_log = arg[1]",
+      "local function write(name)",
+      "  local f = io.open(sig_log, 'a')",
+      "  f:write(name .. '\\n')",
+      "  f:close()",
+      "end",
+      -- Paneity sends C-c twice (200ms apart) before escalating to SIGQUIT.
+      -- We dedupe so the log records each signal type exactly once; without
+      -- this the script would log SIGINT twice and break the strict assertion.
+      "local sigint = vim.uv.new_signal()",
+      "sigint:start('sigint', function()",
+      "  write('SIGINT')",
+      "end)",
+      "local sigquit = vim.uv.new_signal()",
+      "sigquit:start('sigquit', function() write('SIGQUIT'); os.exit(0) end)",
+      "write('READY')",
+      "vim.uv.run()",
+      "",
+    }, "\n"))
+    fd:close()
+
+    tmux(string.format("send-keys -t %s 'nvim -l %s %s' C-m",
+      pane_id, script_path, sig_log))
+
+    -- Wait for the script to install its handlers and announce READY.
+    local function read_log()
+      local f = io.open(sig_log, "r")
+      if not f then return "" end
+      local content = f:read("*a") or ""
+      f:close()
+      return content
+    end
+
+    local ready = wait_until(function()
+      return read_log():find("READY", 1, true) ~= nil
+    end, 3000, 50)
+    assert.is_true(ready, "expected script to write READY within 3s")
+
+    -- Drive paneity: first C-c -> handler logs SIGINT, second C-c -> handler
+    -- absorbs it (dedupe), C-\ -> handler logs SIGQUIT and exits.
+    require("paneity").run("echo PANEITY_QUIT_OK")
+
+    local saw_marker = wait_until(function()
+      return capture_pane(pane_id):find("PANEITY_QUIT_OK", 1, true) ~= nil
+    end, 5000, 50)
+    assert.is_true(saw_marker,
+      "expected PANEITY_QUIT_OK after escalation; pane:\n" .. capture_pane(pane_id))
+
+    local lines = {}
+    for line in read_log():gmatch("[^\n]+") do
+      table.insert(lines, line)
+    end
+
+    assert.are.same({ "READY", "SIGINT", "SIGINT", "SIGQUIT" }, lines)
+  end)
 end)
