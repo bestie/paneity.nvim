@@ -110,40 +110,73 @@ require("paneity").setup({
 })
 ```
 
+### `termination (table)`
+
+Controls how Paneity clears the target pane before running a new command.
+
+```lua
+require("paneity").setup({
+  termination = {
+    -- Send-keys ladder. The first entry is always sent (harmless at an idle
+    -- prompt). Subsequent entries are sent only if Paneity issued the
+    -- previous command in this pane.
+    key_sequence    = { "C-c", "C-\\" },
+
+    -- After the key_sequence is exhausted, send `kill -TERM` to the
+    -- foreground process group. Doubly gated: requires Paneity ownership AND
+    -- the new command must match the previous one (you are re-running the same
+    -- thing). Disable if you run docker-style wrappers where SIGTERM kills the
+    -- host-side CLI but leaves the container process orphaned.
+    send_term       = true,
+
+    -- Time (ms) to wait after each escalation step for the shell to return.
+    step_timeout_ms = 200,
+  },
+})
+```
+
 ## How the previous process is terminated
 
 When you re-run a command, Paneity tries to stop whatever's still running in the
-target pane first. It does this **using only `tmux send-keys`** — no external
-`kill`. That matters when your pane is running something like
-`docker run/exec -it ...` or `ssh somewhere`: the keystrokes get forwarded
-through the PTY *into* the container or remote session, so the inner command is
-interrupted without killing the surrounding `docker`/`ssh` process and tearing
-down your session.
+target pane first. Detection is **PID-based** (not name-based): Paneity reads the
+pane's tty foreground process group and compares it to the pane's shell PID, so
+`bash my_script.sh` is correctly identified as "something is running" rather than
+treated as an idle shell.
 
-The flow:
+The escalation ladder:
 
-1. Read the pane's foreground command (`tmux display -p '#{pane_current_command}'`).
-2. If it's already a shell (`bash`, `zsh`, `fish`, `sh`, `dash`), do nothing.
-3. Otherwise send a first key:
-   - **`C-d`** if it's a known REPL (`irb`, `pry`, `ipython`, `bpython`) —
-     these exit cleanly on EOF and ignore `C-c`.
-   - **`C-c`** otherwise.
-4. Wait up to ~200ms for the foreground to drop back to a shell.
-5. If it hasn't, escalate: a second `C-c`, then `C-\` (SIGQUIT). Each step
-   has its own short wait.
+1. If the shell is already in the foreground, do nothing.
+2. Send the first key in `termination.key_sequence` (`C-c` by default). This is
+   harmless at an idle prompt and clears any partial command line or interrupts a
+   running process. Wait up to `step_timeout_ms` for the shell to return.
+3. If the foreground still isn't the shell — and Paneity issued the current
+   command — send subsequent keys in the sequence (`C-\\` by default). Each step
+   has its own `step_timeout_ms` wait.
+4. If the sequence is exhausted and `send_term = true` — and you are re-running
+   the exact same command — send `kill -TERM` to the foreground process group.
+5. If all else fails, Paneity prompts: **Type anyway**, **Cancel**, or
+   **kill -TERM**.
+
+Steps 3–4 are gated on Paneity ownership (the command was started by Paneity, not
+typed by hand). Step 4 is additionally gated on the new command matching the
+previous one — replacing a command with a different one skips the TERM signal.
 
 The polling uses `vim.wait`, so Neovim stays responsive while it's happening.
 
+### Why send-keys rather than `kill`?
+
+`tmux send-keys` forwards keystrokes through the PTY *into* whatever is running —
+so `C-c` inside `docker run/exec -it ...` or `ssh somewhere` reaches the inner
+process rather than killing the surrounding `docker`/`ssh` process. Only the
+explicit `send_term` step sends a real signal, and it is opt-out rather than
+opt-in.
+
 ### Caveats
 
-* A process that ignores both SIGINT and SIGQUIT will survive, and your new
-  command will queue up behind it. This is rare — most CLIs respect at least
-  one of the two — but it can happen with poorly behaved native binaries or
-  with PTYs that swallow signals.
-* If you're inside a REPL whose name isn't in the list above (e.g. a top-level
-  `python` or `node`), Paneity will send `C-c`, which most REPLs treat as
-  "cancel current input line" rather than "exit". You'll need to exit the
-  REPL yourself before paneity can run a new shell command in that pane.
+* A process that ignores both SIGINT and SIGQUIT and `SIGTERM` will survive, and
+  your new command will be typed into its stdin. Paneity prompts you in that case.
+* Disable `send_term` if you run docker-style wrappers where `SIGTERM` kills the
+  host-side CLI but leaves the container process orphaned.
 
 ## Never Asked Questions
 
