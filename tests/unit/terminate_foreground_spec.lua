@@ -46,4 +46,35 @@ describe("terminate_foreground (unit)", function()
     paneity._terminate_foreground("%1")
     assert.are.same({ "C-c" }, sent_keys)
   end)
+
+  it("sets last_paneity_command when run is called", function()
+    -- Stub send_to_tmux_pane's dependencies so run() doesn't hit real tmux.
+    paneity._terminate_foreground = function() return true end
+    paneity._send_keys = function(_, _) end
+    -- Suppress the actual send_command shell_exec by stubbing the seam it uses;
+    -- send_command isn't a seam, but it goes through shell_exec which is internal.
+    -- Easiest: stub `M.run` indirectly by replacing the send_command path. Use
+    -- the fact that send_to_tmux_pane only calls _terminate_foreground and then
+    -- send_command (which calls shell_exec). Override `io.popen` for this test.
+    local saved_popen = io.popen
+    io.popen = function() return { read = function() return "" end, close = function() end } end
+    paneity.target_pane_id = "%1"
+
+    paneity.run("make test")
+
+    io.popen = saved_popen
+    assert.are.equal("make test", paneity.last_paneity_command)
+  end)
+
+  it("clears last_paneity_command when target pane changes", function()
+    paneity.last_paneity_command = "make test"
+    -- Stub mark_pane's tmux calls via io.popen.
+    local saved_popen = io.popen
+    io.popen = function() return { read = function() return "" end, close = function() end } end
+
+    paneity.set_target_pane_id("%2")
+
+    io.popen = saved_popen
+    assert.is_nil(paneity.last_paneity_command)
+  end)
 end)

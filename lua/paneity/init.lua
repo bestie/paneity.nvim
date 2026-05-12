@@ -229,6 +229,7 @@ end
 
 M.set_target_pane_id = function(pane_id)
   M.target_pane_id = pane_id
+  M.last_paneity_command = nil
   mark_pane(M.target_pane_id, M.config.marker)
 end
 
@@ -328,6 +329,7 @@ end
 function M.run(command)
   send_to_tmux_pane(M.target_pane_id, command)
   M.previous_command = command
+  M.last_paneity_command = command
 end
 
 function M.status_line()
@@ -481,6 +483,7 @@ function M.setup(user_config)
   -- retain some state
   M.target_pane_id = M.target_pane_id or nil
   M.previous_command = M.previous_command or ""
+  M.last_paneity_command = M.last_paneity_command or nil
 
   local config = merge_defaults(user_config)
 
