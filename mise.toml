@@ -1,0 +1,3 @@
+[tools]
+neovim = "latest"
+tmux = "latest"
