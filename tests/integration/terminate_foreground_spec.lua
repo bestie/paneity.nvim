@@ -127,8 +127,7 @@ describe("terminate_foreground", function()
     end, 3000, 50)
     assert.is_true(ready, "expected script to write READY within 3s")
 
-    -- Drive paneity: first C-c -> handler logs SIGINT, second C-c -> handler
-    -- absorbs it (dedupe), C-\ -> handler logs SIGQUIT and exits.
+    -- Drive paneity: C-c -> handler logs SIGINT, C-\ -> handler logs SIGQUIT and exits.
     require("paneity").run("echo PANEITY_QUIT_OK")
 
     local saw_marker = wait_until(function()

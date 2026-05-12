@@ -405,7 +405,7 @@ end
 
 function M.repeat_command()
   if M.previous_command ~= "" and M.target_pane_id then
-    send_to_tmux_pane(M.target_pane_id, M.previous_command)
+    M.run(M.previous_command)
   else
     print_error("must have a target pane and a command to repeat")
   end

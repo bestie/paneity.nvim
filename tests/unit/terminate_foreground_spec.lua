@@ -10,8 +10,11 @@ describe("terminate_foreground (unit)", function()
   local sent_keys
   local kills
 
-  -- queue(): each call returns the next value; sticks on the last value
-  -- once exhausted. Mirrors the wait-loop polling shape.
+  -- queue(): each call returns the next value; sticks on the last value once
+  -- exhausted. With step_timeout_ms=5 and the wait loop's interval=50,
+  -- vim.wait polls twice per wait_for_shell call (immediate + at timeout).
+  -- Plus one tpgid call at the top of _terminate_foreground (lazy clear)
+  -- and one direct call in the TERM branch before the post-TERM wait.
   local function queue(values)
     local i = 0
     return function()
