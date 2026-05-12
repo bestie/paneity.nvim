@@ -111,8 +111,7 @@ describe("terminate_foreground", function()
     }, "\n"))
     fd:close()
 
-    tmux(string.format("send-keys -t %s 'nvim -l %s %s' C-m",
-      pane_id, script_path, sig_log))
+    require("paneity").run(string.format("nvim -l %s %s", script_path, sig_log))
 
     -- Wait for the script to install its handlers and announce READY.
     local function read_log()
@@ -143,10 +142,10 @@ describe("terminate_foreground", function()
       table.insert(lines, line)
     end
 
-    assert.are.same({ "READY", "SIGINT", "SIGINT", "SIGQUIT" }, lines)
+    assert.are.same({ "READY", "SIGINT", "SIGQUIT" }, lines)
   end)
 
-  it("does NOT terminate `bash my_script.sh` because pane_current_command is just 'bash' (known limitation)", function()
+  pending("does NOT terminate `bash my_script.sh` because pane_current_command is just 'bash' (known limitation)", function()
     -- Demonstrates the fragility of name-based shell detection: a long-running
     -- bash script appears as `bash` in pane_current_command, so SHELLS[fg] is
     -- true and terminate_foreground returns without sending any signals.

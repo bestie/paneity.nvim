@@ -63,9 +63,6 @@ local function get_pane_info_by_id(pane_id)
   return nil
 end
 
-local SHELLS = { bash = true, fish = true, zsh = true, sh = true, dash = true }
-local REPLS = { irb = true, pry = true, ipython = true, bpython = true }
-
 -- Internal seams (underscore-prefixed) — exposed on M so unit tests can stub
 -- them. Not part of the public API; production behavior is unchanged.
 function M._pane_current_command(pane_id)
@@ -116,31 +113,65 @@ end
 
 local function wait_for_shell(pane_id, timeout_ms)
   return vim.wait(timeout_ms, function()
-    return SHELLS[M._pane_current_command(pane_id)] == true
+    return shell_is_foreground(pane_id)
   end, 50)
 end
 
-function M._terminate_foreground(pane_id)
-  local fg = M._pane_current_command(pane_id)
-  log("Foreground command: " .. fg)
-  if SHELLS[fg] then return end
+function M._terminate_foreground(pane_id, new_command)
+  local termination = M.config.termination
 
-  -- REPLs exit on EOF; everything else gets SIGINT.
-  local first_key = REPLS[fg] and "C-d" or "C-c"
-  M._send_keys(pane_id, first_key)
-  if wait_for_shell(pane_id, 200) then return end
+  -- Lazy clear: if the shell is already foreground, no paneity command is
+  -- currently running. Nothing to terminate.
+  if shell_is_foreground(pane_id) then
+    M.last_paneity_command = nil
+    return true
+  end
 
-  log("Escalating: C-c")
-  M._send_keys(pane_id, "C-c")
-  if wait_for_shell(pane_id, 200) then return end
+  local key_sequence = termination.key_sequence
 
-  log("Escalating: SIGQUIT")
-  M._send_keys(pane_id, "C-\\")
-  wait_for_shell(pane_id, 200)
+  -- Step 1: always send the first key (C-c by default). Harmless at an idle
+  -- prompt, clears any partial command, interrupts running processes.
+  M._send_keys(pane_id, key_sequence[1])
+  if wait_for_shell(pane_id, termination.step_timeout_ms) then
+    M.last_paneity_command = nil
+    return true
+  end
+
+  -- Gate: don't escalate against processes paneity didn't start.
+  if not M.last_paneity_command then
+    return false
+  end
+
+  -- Step 2: remaining keys in the sequence (gated on paneity ownership).
+  for i = 2, #key_sequence do
+    M._send_keys(pane_id, key_sequence[i])
+    if wait_for_shell(pane_id, termination.step_timeout_ms) then
+      M.last_paneity_command = nil
+      return true
+    end
+  end
+
+  -- Step 3: TERM the foreground process group. Doubly gated:
+  -- (a) send_term must be enabled, (b) the new command must match the last
+  -- paneity-issued command (after whitespace normalization).
+  if termination.send_term and new_command
+     and normalize_command(new_command) == normalize_command(M.last_paneity_command) then
+    local pane_pid = M._pane_pid(pane_id)
+    local tpgid = M._tty_foreground_pgid(pane_pid)
+    if tpgid and tpgid ~= pane_pid then
+      M._kill(tpgid, "TERM")
+      if wait_for_shell(pane_id, termination.step_timeout_ms) then
+        M.last_paneity_command = nil
+        return true
+      end
+    end
+  end
+
+  return false
 end
 
 local function send_to_tmux_pane(target_pane_id, command)
-  M._terminate_foreground(target_pane_id)
+  M._terminate_foreground(target_pane_id, command)
   send_command(target_pane_id, command)
 end
 
