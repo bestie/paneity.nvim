@@ -148,6 +148,10 @@ describe("terminate_foreground", function()
     -- Verifies FIXED behavior: paneity now sends C-c even when pane_current_command
     -- is 'bash' (a running script), then the gate blocks escalation (since paneity
     -- didn't start the script), and the prompt is invoked.
+    -- The script's QUIT trap is load-bearing: it prevents SIGQUIT from
+    -- silently killing bash (the default disposition) if the gate were ever
+    -- to wrongly escalate, so the strict `{ "READY", "SIGINT" }` assertion
+    -- catches the regression instead of passing for the wrong reason.
     local script_path = tmux_tmpdir .. "/script.sh"
     local sig_log = tmux_tmpdir .. "/signals.log"
 
@@ -196,7 +200,11 @@ describe("terminate_foreground", function()
 
     require("paneity").run("echo PANEITY_OK")
 
-    vim.wait(500)
+    -- Wait for SIGINT to land in the log (or fail fast if it doesn't).
+    local saw_signal = wait_until(function()
+      return read_log():find("SIGINT", 1, true) ~= nil
+    end, 1000, 20)
+    assert.is_true(saw_signal, "expected SIGINT in log within 1s; got: " .. read_log())
 
     -- C-c WAS sent (SIGINT trap fired). The gate blocked escalation since
     -- paneity didn't start the script. The prompt was invoked.
