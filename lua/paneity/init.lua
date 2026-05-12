@@ -82,6 +82,7 @@ function M._pane_pid(pane_id)
 end
 
 function M._tty_foreground_pgid(pane_pid)
+  if pane_pid == nil then return nil end
   local output = shell_exec(string.format("ps -o tpgid= -p %s", pane_pid))
   return tonumber(output)
 end
