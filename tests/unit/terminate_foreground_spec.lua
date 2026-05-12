@@ -161,4 +161,58 @@ describe("terminate_foreground (unit)", function()
     assert.is_nil(paneity.last_paneity_command)
     assert.are.equal("%2", paneity.target_pane_id)
   end)
+
+  describe("run with UI prompt fallback", function()
+    local sent_commands
+
+    before_each(function()
+      sent_commands = {}
+      paneity.target_pane_id = "%1"
+      -- Stub the shell_exec call inside send_command (no real tmux).
+      local saved_popen = io.popen
+      io.popen = function(cmd)
+        if cmd:match("send%-keys.*C%-m") then
+          table.insert(sent_commands, cmd)
+        end
+        return { read = function() return "" end, close = function() end }
+      end
+      paneity._restore_popen = function() io.popen = saved_popen end
+    end)
+
+    after_each(function()
+      paneity._restore_popen()
+    end)
+
+    it("does not send the command when the user picks Cancel", function()
+      paneity._terminate_foreground = function() return false end
+      paneity._prompt_termination_choice = function() return "cancel" end
+
+      paneity.run("echo X")
+
+      assert.are.same({}, sent_commands)
+    end)
+
+    it("sends the command when the user picks Type anyway", function()
+      paneity._terminate_foreground = function() return false end
+      paneity._prompt_termination_choice = function() return "type" end
+
+      paneity.run("echo X")
+
+      assert.is_true(#sent_commands == 1, "expected one send-keys call")
+    end)
+
+    it("issues kill -TERM and sends the command when the user picks TERM", function()
+      paneity._terminate_foreground = function() return false end
+      paneity._prompt_termination_choice = function() return "term" end
+      paneity._pane_pid = function() return 100 end
+      paneity._tty_foreground_pgid = function() return 200 end
+      kills = {}
+      paneity._kill = function(pid, sig) table.insert(kills, { pid = pid, sig = sig }) end
+
+      paneity.run("echo X")
+
+      assert.are.same({ { pid = 200, sig = "TERM" } }, kills)
+      assert.is_true(#sent_commands == 1, "expected the command to be sent after TERM")
+    end)
+  end)
 end)

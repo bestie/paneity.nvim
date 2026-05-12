@@ -170,11 +170,6 @@ function M._terminate_foreground(pane_id, new_command)
   return false
 end
 
-local function send_to_tmux_pane(target_pane_id, command)
-  M._terminate_foreground(target_pane_id, command)
-  send_command(target_pane_id, command)
-end
-
 local function mark_pane(pane_id, marker)
   local tmux_border_format = shell_exec("tmux show-option -g pane-border-format")
   local new_tmux_border_format = string.gsub(tmux_border_format, "#P", marker .. "#P", 1)
@@ -358,7 +353,25 @@ end
 -- Public functions ------------------------------------------------------------
 
 function M.run(command)
-  send_to_tmux_pane(M.target_pane_id, command)
+  local pane_id = M.target_pane_id
+  local ok = M._terminate_foreground(pane_id, command)
+
+  if not ok then
+    local choice = M._prompt_termination_choice()
+    if choice == "cancel" then
+      return
+    elseif choice == "term" then
+      local pane_pid = M._pane_pid(pane_id)
+      local tpgid = M._tty_foreground_pgid(pane_pid)
+      if tpgid and tpgid ~= pane_pid then
+        M._kill(tpgid, "TERM")
+        wait_for_shell(pane_id, M.config.termination.step_timeout_ms)
+      end
+    end
+    -- "type" falls through: send the command into whatever's there.
+  end
+
+  send_command(pane_id, command)
   M.previous_command = command
   M.last_paneity_command = command
 end
