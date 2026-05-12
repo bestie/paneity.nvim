@@ -66,37 +66,43 @@ end
 local SHELLS = { bash = true, fish = true, zsh = true, sh = true, dash = true }
 local REPLS = { irb = true, pry = true, ipython = true, bpython = true }
 
-local function pane_current_command(pane_id)
+-- Internal seams (underscore-prefixed) — exposed on M so unit tests can stub
+-- them. Not part of the public API; production behavior is unchanged.
+function M._pane_current_command(pane_id)
   return shell_exec(string.format("tmux display -p -t %s '#{pane_current_command}'", pane_id))
+end
+
+function M._send_keys(pane_id, key)
+  shell_exec(string.format("tmux send-keys -t %s '%s'", pane_id, key))
 end
 
 local function wait_for_shell(pane_id, timeout_ms)
   return vim.wait(timeout_ms, function()
-    return SHELLS[pane_current_command(pane_id)] == true
+    return SHELLS[M._pane_current_command(pane_id)] == true
   end, 50)
 end
 
-local function terminate_foreground(pane_id)
-  local fg = pane_current_command(pane_id)
+function M._terminate_foreground(pane_id)
+  local fg = M._pane_current_command(pane_id)
   log("Foreground command: " .. fg)
   if SHELLS[fg] then return end
 
   -- REPLs exit on EOF; everything else gets SIGINT.
   local first_key = REPLS[fg] and "C-d" or "C-c"
-  shell_exec(string.format("tmux send-keys -t %s %s", pane_id, first_key))
+  M._send_keys(pane_id, first_key)
   if wait_for_shell(pane_id, 200) then return end
 
   log("Escalating: C-c")
-  shell_exec(string.format("tmux send-keys -t %s C-c", pane_id))
+  M._send_keys(pane_id, "C-c")
   if wait_for_shell(pane_id, 200) then return end
 
   log("Escalating: SIGQUIT")
-  shell_exec(string.format("tmux send-keys -t %s 'C-\\'", pane_id))
+  M._send_keys(pane_id, "C-\\")
   wait_for_shell(pane_id, 200)
 end
 
 local function send_to_tmux_pane(target_pane_id, command)
-  terminate_foreground(target_pane_id)
+  M._terminate_foreground(target_pane_id)
   send_command(target_pane_id, command)
 end
 
