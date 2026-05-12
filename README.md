@@ -17,14 +17,16 @@ Paneity allows you to attach to an existing pane or open a new one.
 
 ## Features
 
-* Attach to an existing pane (choose from menu)
+* Attach to an existing pane (choose with native UI or fzf-lua)
 * Open a new pane (set same current directory)
 * Set an arbitrary command to run
-* Re-run the command with a leader keybinding
-* Abort partial/failed tests and builds by sending `ctrl-c`
-* Scroll the attached pane up and down without leaving Neovim
-* Configure how your splits are created or leave tmux defaults in place
-* Add a marker to indicate the currently attached tmux pane
+* Re-run the command with a keybinding (default <leader><leader>)
+* Terminates the previously started process if it's still running
+* Can scroll the attached pane up and down without leaving Neovim (default <PageUp>/<PageDown>)
+* Configurable tmux splitting
+* Adds a marker to the tmux border of the selected pane (configuratble marker)
+* Easy status line function that can be added [lualine](https://github.com/nvim-lualine/lualine.nvim) etc.
+* Configurable key bindings
 
 ## Installation
 
@@ -48,6 +50,7 @@ require("paneity").setup({
   split_direction = nil, -- Options: "horizontal", "vertical" (nil means tmux default)
   split_size = nil, -- Number rows/columns of available space (nil means tmux default)
   split_percentage_size = nil, -- Percentage of available space, takes precendence over `split_size` (nil means tmux default)
+  log_level = vim.log.levels.OFF,
   keybindings = { -- false to disable all keybindings
     -- set individual keybindings to false to disable
     toggle = "<leader>tp", -- Toggle on/off, on sets target pane or opens a new one
@@ -106,6 +109,41 @@ require("paneity").setup({
   }
 })
 ```
+
+## How the previous process is terminated
+
+When you re-run a command, Paneity tries to stop whatever's still running in the
+target pane first. It does this **using only `tmux send-keys`** — no external
+`kill`. That matters when your pane is running something like
+`docker run/exec -it ...` or `ssh somewhere`: the keystrokes get forwarded
+through the PTY *into* the container or remote session, so the inner command is
+interrupted without killing the surrounding `docker`/`ssh` process and tearing
+down your session.
+
+The flow:
+
+1. Read the pane's foreground command (`tmux display -p '#{pane_current_command}'`).
+2. If it's already a shell (`bash`, `zsh`, `fish`, `sh`, `dash`), do nothing.
+3. Otherwise send a first key:
+   - **`C-d`** if it's a known REPL (`irb`, `pry`, `ipython`, `bpython`) —
+     these exit cleanly on EOF and ignore `C-c`.
+   - **`C-c`** otherwise.
+4. Wait up to ~200ms for the foreground to drop back to a shell.
+5. If it hasn't, escalate: a second `C-c`, then `C-\` (SIGQUIT). Each step
+   has its own short wait.
+
+The polling uses `vim.wait`, so Neovim stays responsive while it's happening.
+
+### Caveats
+
+* A process that ignores both SIGINT and SIGQUIT will survive, and your new
+  command will queue up behind it. This is rare — most CLIs respect at least
+  one of the two — but it can happen with poorly behaved native binaries or
+  with PTYs that swallow signals.
+* If you're inside a REPL whose name isn't in the list above (e.g. a top-level
+  `python` or `node`), Paneity will send `C-c`, which most REPLs treat as
+  "cancel current input line" rather than "exit". You'll need to exit the
+  REPL yourself before paneity can run a new shell command in that pane.
 
 ## Never Asked Questions
 
