@@ -145,4 +145,61 @@ describe("terminate_foreground", function()
 
     assert.are.same({ "READY", "SIGINT", "SIGINT", "SIGQUIT" }, lines)
   end)
+
+  it("does NOT terminate `bash my_script.sh` because pane_current_command is just 'bash' (known limitation)", function()
+    -- Demonstrates the fragility of name-based shell detection: a long-running
+    -- bash script appears as `bash` in pane_current_command, so SHELLS[fg] is
+    -- true and terminate_foreground returns without sending any signals.
+    local script_path = tmux_tmpdir .. "/script.sh"
+    local sig_log = tmux_tmpdir .. "/signals.log"
+
+    local fd = assert(io.open(script_path, "w"))
+    fd:write(table.concat({
+      "log=\"$1\"",
+      "trap 'echo SIGINT >> \"$log\"' INT",
+      "trap 'echo SIGQUIT >> \"$log\"' QUIT",
+      "echo READY >> \"$log\"",
+      "while true; do read line; done",
+      "",
+    }, "\n"))
+    fd:close()
+
+    tmux(string.format("send-keys -t %s 'bash %s %s' C-m",
+      pane_id, script_path, sig_log))
+
+    local function read_log()
+      local f = io.open(sig_log, "r")
+      if not f then return "" end
+      local content = f:read("*a") or ""
+      f:close()
+      return content
+    end
+
+    local ready = wait_until(function()
+      return read_log():find("READY", 1, true) ~= nil
+    end, 3000, 50)
+    assert.is_true(ready, "expected script to write READY within 3s")
+
+    -- Precondition the bug depends on: tmux reports the foreground as plain
+    -- `bash`, indistinguishable from an idle interactive shell prompt.
+    local fg = trim(vim.fn.system(
+      string.format("tmux display -p -t %s '#{pane_current_command}'", pane_id)
+    ))
+    assert.are.equal("bash", fg,
+      "precondition failed: expected pane_current_command='bash' but got '" .. fg .. "'")
+
+    -- Trigger paneity. terminate_foreground hits SHELLS[fg] and early-returns;
+    -- send_command then writes the command into the pane, where bash's `read`
+    -- consumes it as input rather than executing it.
+    require("paneity").run("echo PANEITY_BUG")
+
+    vim.wait(500)
+
+    -- No signals were ever sent — the trap log only contains READY.
+    local lines = {}
+    for line in read_log():gmatch("[^\n]+") do
+      table.insert(lines, line)
+    end
+    assert.are.same({ "READY" }, lines)
+  end)
 end)
