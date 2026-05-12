@@ -76,6 +76,43 @@ function M._send_keys(pane_id, key)
   shell_exec(string.format("tmux send-keys -t %s '%s'", pane_id, key))
 end
 
+function M._pane_pid(pane_id)
+  local output = shell_exec(string.format("tmux display -p -t %s '#{pane_pid}'", pane_id))
+  return tonumber(output)
+end
+
+function M._tty_foreground_pgid(pane_pid)
+  local output = shell_exec(string.format("ps -o tpgid= -p %s", pane_pid))
+  return tonumber(output)
+end
+
+function M._kill(pid, signal)
+  shell_exec(string.format("kill -%s %s", signal, pid))
+end
+
+function M._prompt_termination_choice()
+  local choice = vim.fn.confirm(
+    "Paneity: foreground didn't respond. Type anyway, cancel, or kill -TERM?",
+    "&Type anyway\n&Cancel\nkill -&TERM",
+    2  -- default: Cancel
+  )
+  if choice == 1 then return "type"
+  elseif choice == 3 then return "term"
+  else return "cancel" end
+end
+
+local function shell_is_foreground(pane_id)
+  local pane_pid = M._pane_pid(pane_id)
+  if not pane_pid then return false end
+  local tpgid = M._tty_foreground_pgid(pane_pid)
+  return tpgid ~= nil and tpgid == pane_pid
+end
+
+local function normalize_command(command)
+  if command == nil then return nil end
+  return (command:gsub("%s+", " "):gsub("^%s*(.-)%s*$", "%1"))
+end
+
 local function wait_for_shell(pane_id, timeout_ms)
   return vim.wait(timeout_ms, function()
     return SHELLS[M._pane_current_command(pane_id)] == true
@@ -383,6 +420,11 @@ M.defaults = {
   split_direction = nil,
   split_size = nil,
   split_percentage_size = nil,
+  termination = {
+    key_sequence    = { "C-c", "C-\\" },
+    send_term       = true,
+    step_timeout_ms = 200,
+  },
   keybindings = {
     toggle = "<leader>tp",
     repeat_command = "<leader><leader>",
