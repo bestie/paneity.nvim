@@ -29,7 +29,6 @@ local function shell_exec(command)
 end
 
 local function send_command(target_pane_id, keys)
-  shell_exec(string.format("tmux send-keys -t %s C-c", target_pane_id))
   shell_exec(string.format("tmux send-keys -t %s '%s' C-m", target_pane_id, keys))
 end
 
@@ -64,27 +63,40 @@ local function get_pane_info_by_id(pane_id)
   return nil
 end
 
-local function term_foreground_process(pane_info)
-  local fg_process = pane_info.command
-  local shell_pid = pane_info.pid
-  local kill_command = string.format("pgrep -P %s | xargs kill -TERM", shell_pid)
-  local output = ""
+local SHELLS = { bash = true, fish = true, zsh = true, sh = true, dash = true }
+local REPLS = { irb = true, pry = true, ipython = true, bpython = true }
 
-  if shell_pid ~= "" and fg_process ~= "bash" and fg_process ~= "fish" and fg_process ~= "zsh" then
-    output = shell_exec(kill_command)
-    -- naively assume that by the time kill has returned and the keys are sent the process has exited
-    -- blocking here could cause problems and it's been working well enough so far
-  end
+local function pane_current_command(pane_id)
+  return shell_exec(string.format("tmux display -p -t %s '#{pane_current_command}'", pane_id))
+end
 
-  return output
+local function wait_for_shell(pane_id, timeout_ms)
+  return vim.wait(timeout_ms, function()
+    return SHELLS[pane_current_command(pane_id)] == true
+  end, 50)
+end
+
+local function terminate_foreground(pane_id)
+  local fg = pane_current_command(pane_id)
+  log("Foreground command: " .. fg)
+  if SHELLS[fg] then return end
+
+  -- REPLs exit on EOF; everything else gets SIGINT.
+  local first_key = REPLS[fg] and "C-d" or "C-c"
+  shell_exec(string.format("tmux send-keys -t %s %s", pane_id, first_key))
+  if wait_for_shell(pane_id, 200) then return end
+
+  log("Escalating: C-c")
+  shell_exec(string.format("tmux send-keys -t %s C-c", pane_id))
+  if wait_for_shell(pane_id, 200) then return end
+
+  log("Escalating: SIGQUIT")
+  shell_exec(string.format("tmux send-keys -t %s 'C-\\'", pane_id))
+  wait_for_shell(pane_id, 200)
 end
 
 local function send_to_tmux_pane(target_pane_id, command)
-  local pane_info = get_pane_info_by_id(target_pane_id)
-  log("Pane info: " .. vim.inspect(pane_info))
-
-  term_foreground_process(pane_info)
-
+  terminate_foreground(target_pane_id)
   send_command(target_pane_id, command)
 end
 
