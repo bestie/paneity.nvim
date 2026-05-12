@@ -199,6 +199,8 @@ describe("terminate_foreground (unit)", function()
       paneity.run("echo X")
 
       assert.is_true(#sent_commands == 1, "expected one send-keys call")
+      assert.is_truthy(sent_commands[1]:find("echo X", 1, true),
+        "expected the command 'echo X' to be sent; got: " .. (sent_commands[1] or "nil"))
     end)
 
     it("issues kill -TERM and sends the command when the user picks TERM", function()
@@ -206,13 +208,27 @@ describe("terminate_foreground (unit)", function()
       paneity._prompt_termination_choice = function() return "term" end
       paneity._pane_pid = function() return 100 end
       paneity._tty_foreground_pgid = function() return 200 end
-      kills = {}
-      paneity._kill = function(pid, sig) table.insert(kills, { pid = pid, sig = sig }) end
 
       paneity.run("echo X")
 
       assert.are.same({ { pid = 200, sig = "TERM" } }, kills)
       assert.is_true(#sent_commands == 1, "expected the command to be sent after TERM")
+      assert.is_truthy(sent_commands[1]:find("echo X", 1, true),
+        "expected the command 'echo X' to be sent; got: " .. (sent_commands[1] or "nil"))
+    end)
+
+    it("does not prompt when _terminate_foreground returns true", function()
+      local prompted = false
+      paneity._terminate_foreground = function() return true end
+      paneity._prompt_termination_choice = function()
+        prompted = true
+        return "cancel"
+      end
+
+      paneity.run("echo X")
+
+      assert.is_false(prompted, "prompt must not fire on successful termination")
+      assert.is_true(#sent_commands == 1, "expected the command to be sent")
     end)
   end)
 end)
