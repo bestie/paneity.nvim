@@ -144,10 +144,10 @@ describe("terminate_foreground", function()
     assert.are.same({ "READY", "SIGINT", "SIGQUIT" }, lines)
   end)
 
-  pending("does NOT terminate `bash my_script.sh` because pane_current_command is just 'bash' (known limitation)", function()
-    -- Demonstrates the fragility of name-based shell detection: a long-running
-    -- bash script appears as `bash` in pane_current_command, so SHELLS[fg] is
-    -- true and terminate_foreground returns without sending any signals.
+  it("sends C-c to a foreground bash script and prompts when gate blocks escalation", function()
+    -- Verifies FIXED behavior: paneity now sends C-c even when pane_current_command
+    -- is 'bash' (a running script), then the gate blocks escalation (since paneity
+    -- didn't start the script), and the prompt is invoked.
     local script_path = tmux_tmpdir .. "/script.sh"
     local sig_log = tmux_tmpdir .. "/signals.log"
 
@@ -178,26 +178,38 @@ describe("terminate_foreground", function()
     end, 3000, 50)
     assert.is_true(ready, "expected script to write READY within 3s")
 
-    -- Precondition the bug depends on: tmux reports the foreground as plain
-    -- `bash`, indistinguishable from an idle interactive shell prompt.
+    -- Verify the test setup: tmux reports the foreground as plain `bash`,
+    -- indistinguishable from an idle interactive shell prompt. This is the
+    -- scenario the fix addresses.
     local fg = trim(vim.fn.system(
       string.format("tmux display -p -t %s '#{pane_current_command}'", pane_id)
     ))
     assert.are.equal("bash", fg,
       "precondition failed: expected pane_current_command='bash' but got '" .. fg .. "'")
 
-    -- Trigger paneity. terminate_foreground hits SHELLS[fg] and early-returns;
-    -- send_command then writes the command into the pane, where bash's `read`
-    -- consumes it as input rather than executing it.
-    require("paneity").run("echo PANEITY_BUG")
+    -- Stub the prompt to choose Cancel (no command will be sent).
+    local prompted = false
+    require("paneity")._prompt_termination_choice = function()
+      prompted = true
+      return "cancel"
+    end
+
+    require("paneity").run("echo PANEITY_OK")
 
     vim.wait(500)
 
-    -- No signals were ever sent — the trap log only contains READY.
+    -- C-c WAS sent (SIGINT trap fired). The gate blocked escalation since
+    -- paneity didn't start the script. The prompt was invoked.
     local lines = {}
     for line in read_log():gmatch("[^\n]+") do
       table.insert(lines, line)
     end
-    assert.are.same({ "READY" }, lines)
+    assert.are.same({ "READY", "SIGINT" }, lines)
+    assert.is_true(prompted, "expected the UI prompt to be invoked")
+
+    -- And the new command was NOT sent (user picked Cancel).
+    local pane_content = capture_pane(pane_id)
+    assert.is_nil(pane_content:find("PANEITY_OK", 1, true),
+      "expected PANEITY_OK not to appear; got:\n" .. pane_content)
   end)
 end)
