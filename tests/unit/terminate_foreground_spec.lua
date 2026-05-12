@@ -50,7 +50,6 @@ describe("terminate_foreground (unit)", function()
   it("sets last_paneity_command when run is called", function()
     -- Stub send_to_tmux_pane's dependencies so run() doesn't hit real tmux.
     paneity._terminate_foreground = function() return true end
-    paneity._send_keys = function(_, _) end
     -- Suppress the actual send_command shell_exec by stubbing the seam it uses;
     -- send_command isn't a seam, but it goes through shell_exec which is internal.
     -- Easiest: stub `M.run` indirectly by replacing the send_command path. Use
@@ -76,5 +75,6 @@ describe("terminate_foreground (unit)", function()
 
     io.popen = saved_popen
     assert.is_nil(paneity.last_paneity_command)
+    assert.are.equal("%2", paneity.target_pane_id)
   end)
 end)
