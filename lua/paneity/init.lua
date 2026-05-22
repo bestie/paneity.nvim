@@ -65,10 +65,6 @@ end
 
 -- Internal seams (underscore-prefixed) — exposed on M so unit tests can stub
 -- them. Not part of the public API; production behavior is unchanged.
-function M._pane_current_command(pane_id)
-  return shell_exec(string.format("tmux display -p -t %s '#{pane_current_command}'", pane_id))
-end
-
 function M._send_keys(pane_id, key)
   shell_exec(string.format("tmux send-keys -t %s '%s'", pane_id, key))
 end
@@ -109,6 +105,16 @@ end
 local function normalize_command(command)
   if command == nil then return nil end
   return (command:gsub("%s+", " "):gsub("^%s*(.-)%s*$", "%1"))
+end
+
+local function kill_foreground(pane_id)
+  local pane_pid = M._pane_pid(pane_id)
+  local tpgid = M._tty_foreground_pgid(pane_pid)
+  if tpgid and tpgid ~= pane_pid then
+    M._kill(tpgid, "TERM")
+    return true
+  end
+  return false
 end
 
 local function wait_for_shell(pane_id, timeout_ms)
@@ -155,10 +161,7 @@ function M._terminate_foreground(pane_id, new_command)
   -- paneity-issued command (after whitespace normalization).
   if termination.send_term and new_command
      and normalize_command(new_command) == normalize_command(M.last_paneity_command) then
-    local pane_pid = M._pane_pid(pane_id)
-    local tpgid = M._tty_foreground_pgid(pane_pid)
-    if tpgid and tpgid ~= pane_pid then
-      M._kill(tpgid, "TERM")
+    if kill_foreground(pane_id) then
       if wait_for_shell(pane_id, termination.step_timeout_ms) then
         M.last_paneity_command = nil
         return true
@@ -360,10 +363,7 @@ function M.run(command)
     if choice == "cancel" then
       return
     elseif choice == "term" then
-      local pane_pid = M._pane_pid(pane_id)
-      local tpgid = M._tty_foreground_pgid(pane_pid)
-      if tpgid and tpgid ~= pane_pid then
-        M._kill(tpgid, "TERM")
+      if kill_foreground(pane_id) then
         wait_for_shell(pane_id, M.config.termination.step_timeout_ms)
       end
     end
@@ -394,6 +394,7 @@ function M.toggle()
   if M.target_pane_id then
     unmark_pane(M.target_pane_id)
     M.target_pane_id = nil
+    M.last_paneity_command = nil
     print_message("disabled ❌")
   else
     M.set_target_pane()

@@ -104,7 +104,9 @@ needing special-case handling.
    `make test` match; `make test` and `make test -v` do not.
 
 4. **User prompt.** If the shell still hasn't returned after all permitted
-   escalation, surface a synchronous UI prompt via `vim.ui.select`:
+   escalation, surface a synchronous UI prompt via `vim.fn.confirm` (chosen
+   over `vim.ui.select` for its synchronous behavior and lack of plugin
+   dependency — no telescope/fzf-lua override needed):
    - **Type anyway** — send the new command into whatever is in the
      foreground.
    - **Cancel** — abort without sending.
@@ -222,9 +224,10 @@ Stub `M._tty_foreground_pgid`, `M._send_keys`, `M._kill`, and a fake
 - `shell_is_foreground(pane_id)` is a local helper that fetches `pane_pid`
   once and compares it to `M._tty_foreground_pgid(pane_pid)`. The seam stays
   low-level (just the `ps` call) so unit tests can stub it directly.
-- The UI prompt uses `vim.ui.select`, which is synchronous in default
-  Neovim — fine here since the rest of paneity is already synchronous on
-  the main loop. No nested `vim.wait` during the prompt.
+- The UI prompt uses `vim.fn.confirm` (rather than `vim.ui.select`) because
+  it is synchronous with no plugin dependency. The rest of paneity is already
+  synchronous on the main loop, so no nested `vim.wait` is needed during the
+  prompt.
 
 ## Migration / compatibility
 

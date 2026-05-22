@@ -183,6 +183,10 @@ opt-in.
   ipython), you may want to configure `key_sequence = { "C-d", "C-c" }` so
   Paneity exits the REPL cleanly before sending a new command. Previous
   versions of Paneity hard-coded this behaviour; it is now opt-in via config.
+  Note: when you configure two keys, only the first is sent unconditionally;
+  the second is gated on Paneity ownership. If your manually-launched REPL
+  ignores the first key, Paneity will show the prompt rather than sending the
+  second.
 
 ## Never Asked Questions
 

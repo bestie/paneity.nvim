@@ -83,8 +83,8 @@ describe("terminate_foreground", function()
 
   it("escalates to SIGQUIT when the foreground process ignores SIGINT", function()
     -- Lua script run via `nvim -l` — nvim is already on PATH via mise, so we
-    -- don't need any extra runtime. pane_current_command will be `nvim`,
-    -- which is not in SHELLS, so terminate_foreground engages the ladder.
+    -- don't need any extra runtime. nvim's tpgid differs from pane_pid, so
+    -- terminate_foreground engages the ladder.
     local script_path = tmux_tmpdir .. "/blocker.lua"
     local sig_log = tmux_tmpdir .. "/signals.log"
 
