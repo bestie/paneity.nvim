@@ -51,6 +51,11 @@ require("paneity").setup({
   split_size = nil, -- Number rows/columns of available space (nil means tmux default)
   split_percentage_size = nil, -- Percentage of available space, takes precendence over `split_size` (nil means tmux default)
   log_level = vim.log.levels.OFF,
+  termination = { -- See `termination` section below for details
+    key_sequence    = { "C-c", "C-\\" },
+    send_term       = true,
+    step_timeout_ms = 200,
+  },
   keybindings = { -- false to disable all keybindings
     -- set individual keybindings to false to disable
     toggle = "<leader>tp", -- Toggle on/off, on sets target pane or opens a new one
