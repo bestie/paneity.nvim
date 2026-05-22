@@ -193,6 +193,87 @@ opt-in.
   ignores the first key, Paneity will show the prompt rather than sending the
   second.
 
+## Development
+
+### Running the tests
+
+You need `nvim` and `tmux` on your `PATH`. Then:
+
+```bash
+make test
+```
+
+`make test` runs the full suite (unit + integration) under headless
+Neovim. Tests use [plenary.nvim](https://github.com/nvim-lua/plenary.nvim)'s
+`PlenaryBustedDirectory`; plenary is cloned on demand into `deps/plenary.nvim`
+(gitignored). There is no separate build step or linter.
+
+### Test layout
+
+- **`tests/unit/`** — fast, no real tmux. Stubs the internal seams on `M`
+  (the underscore-prefixed members listed below) and asserts on recorded
+  calls. This is where most behavior tests live.
+- **`tests/integration/`** — spins up a private tmux server per test via
+  `vim.env.TMUX_TMPDIR = $(mktemp -d)`. Both the test's `vim.fn.system`
+  calls and the plugin's `io.popen` calls inherit this env var, so all
+  `tmux` invocations land on an isolated socket — your real tmux session is
+  never touched. Cleanup runs `tmux kill-server` and removes the tmpdir.
+
+### Code layout
+
+Everything lives in `lua/paneity/init.lua`. The module table `M` holds
+**both** the public API and persistent state (`M.target_pane_id`,
+`M.previous_command`, `M.last_paneity_command`, `M.config`).
+
+All tmux interaction goes through `shell_exec` (a thin `io.popen` wrapper).
+There's no libuv, no `vim.system`, no job control. Calls are **synchronous
+and blocking** on the Neovim main loop — keep them cheap.
+
+`setup()` is deliberately re-entrant: it preserves existing state on reload
+via the `M.target_pane_id = M.target_pane_id or nil` idiom. Don't refactor
+this state into locals without preserving that property — users reload
+configs and the plugin shouldn't lose track of its target pane.
+
+### Internal seams
+
+Functions whose names start with `M._` are stubbable in unit tests. They
+thinly wrap an external call (tmux, ps, kill, `vim.fn.confirm`) and live
+on the module table so tests can replace them. Production callers route
+through them too. Current seams:
+
+- `M._pane_pid(pane_id)` — wraps `tmux display -p '#{pane_pid}'`.
+- `M._tty_foreground_pgid(pane_pid)` — wraps `ps -o tpgid= -p <pid>`.
+- `M._send_keys(pane_id, key)` — wraps `tmux send-keys -t %s '%s'`.
+  Always single-quotes the key, so call sites pass bare `"C-c"` / `"C-\\"`.
+- `M._kill(pid, signal)` — wraps `kill -SIG <pid>`.
+- `M._prompt_termination_choice()` — wraps `vim.fn.confirm` for the
+  termination fallback prompt.
+- `M._terminate_foreground(pane_id, new_command)` — the escalation ladder
+  itself; promoted to the module so tests can drive it directly.
+
+If you add a new external interaction, make it a seam — it keeps unit
+tests fast and deterministic without needing a real tmux server.
+
+### Test stub patterns
+
+Unit tests use a small `queue()` helper that feeds successive return
+values to a stubbed seam, sticking on the last value once exhausted. With
+`step_timeout_ms = 5` and `vim.wait`'s default interval of 50ms, each
+`wait_for_shell` invocation calls the predicate twice (immediate + at
+timeout). Combined with the initial `shell_is_foreground` call at the top
+of `_terminate_foreground` and the direct `_tty_foreground_pgid` call in
+the TERM branch, queue lengths should be sized to cover the expected call
+count for the path under test.
+
+### Manual smoke testing
+
+```
+nvim                                     # under tmux
+:lua require("paneity").setup()
+```
+
+Then exercise the keybindings against a real pane.
+
 ## Never Asked Questions
 
 Does Paneity ever close the pane?
