@@ -1,7 +1,7 @@
 .PHONY: test
 
 test: deps/plenary.nvim
-	mise exec -- nvim --headless --noplugin -u tests/minimal_init.lua \
+	nvim --headless --noplugin -u tests/minimal_init.lua \
 		-c "PlenaryBustedDirectory tests {minimal_init = 'tests/minimal_init.lua'}"
 
 deps/plenary.nvim:
