@@ -121,10 +121,9 @@ function M._terminate_foreground(pane_id, new_command)
   local termination = M.config.termination
 
   -- Lazy clear: if the shell is already foreground, no paneity command is
-  -- currently running. Nothing to terminate.
+  -- currently running, so any retained ownership state is stale.
   if shell_is_foreground(pane_id) then
     M.last_paneity_command = nil
-    return true
   end
 
   local key_sequence = termination.key_sequence

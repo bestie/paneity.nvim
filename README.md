@@ -117,15 +117,16 @@ Controls how Paneity clears the target pane before running a new command.
 ```lua
 require("paneity").setup({
   termination = {
-    -- Send-keys ladder. The first entry is always sent (harmless at an idle
-    -- prompt). Subsequent entries are sent only if Paneity issued the
-    -- previous command in this pane.
+    -- Send-keys ladder. The first entry is sent on every paneity command,
+    -- even at an idle prompt — it clears any partial command left at the
+    -- shell prompt. Subsequent entries are sent only if Paneity issued the
+    -- command that is currently running in the pane.
     key_sequence    = { "C-c", "C-\\" },
 
     -- After the key_sequence is exhausted, send `kill -TERM` to the
     -- foreground process group. Doubly gated: requires Paneity ownership AND
-    -- the new command must match the previous one (you are re-running the same
-    -- thing). Disable if you run docker-style wrappers where SIGTERM kills the
+    -- the new command must match the previous one (whitespace is normalized).
+    -- Disable if you run docker-style wrappers where SIGTERM kills the
     -- host-side CLI but leaves the container process orphaned.
     send_term       = true,
 
@@ -145,20 +146,22 @@ treated as an idle shell.
 
 The escalation ladder:
 
-1. If the shell is already in the foreground, do nothing.
-2. Send the first key in `termination.key_sequence` (`C-c` by default). This is
-   harmless at an idle prompt and clears any partial command line or interrupts a
-   running process. Wait up to `step_timeout_ms` for the shell to return.
-3. If the foreground still isn't the shell — and Paneity issued the current
-   command — send subsequent keys in the sequence (`C-\\` by default). Each step
-   has its own `step_timeout_ms` wait.
-4. If the sequence is exhausted and `send_term = true` — and you are re-running
-   the exact same command — send `kill -TERM` to the foreground process group.
-5. If all else fails, Paneity prompts: **Type anyway**, **Cancel**, or
+1. Send the first key in `termination.key_sequence` (`C-c` by default). This
+   happens unconditionally — it clears any partial command at an idle prompt,
+   or interrupts a running process. Wait up to `step_timeout_ms` for the
+   shell to return.
+2. If the foreground still isn't the shell — and Paneity issued the command
+   that's currently running in the pane — send subsequent keys in the
+   sequence (`C-\\` by default). Each step has its own `step_timeout_ms` wait.
+3. If the sequence is exhausted and `send_term = true` — and the new command
+   matches the previous one (whitespace is normalized — `'make test'` and
+   `'  make   test  '` are equivalent) — send `kill -TERM` to the foreground
+   process group.
+4. If all else fails, Paneity prompts: **Type anyway**, **Cancel**, or
    **kill -TERM**.
 
-Steps 3–4 are gated on Paneity ownership (the command was started by Paneity, not
-typed by hand). Step 4 is additionally gated on the new command matching the
+Steps 2–3 are gated on Paneity ownership (the command was started by Paneity, not
+typed by hand). Step 3 is additionally gated on the new command matching the
 previous one — replacing a command with a different one skips the TERM signal.
 
 The polling uses `vim.wait`, so Neovim stays responsive while it's happening.
@@ -175,8 +178,11 @@ opt-in.
 
 * A process that ignores both SIGINT and SIGQUIT and `SIGTERM` will survive, and
   your new command will be typed into its stdin. Paneity prompts you in that case.
-* Disable `send_term` if you run docker-style wrappers where `SIGTERM` kills the
-  host-side CLI but leaves the container process orphaned.
+* See the `send_term` note above for docker-style wrapper caveats.
+* **REPL users:** If your pane runs a REPL that exits on EOF (irb, pry,
+  ipython), you may want to configure `key_sequence = { "C-d", "C-c" }` so
+  Paneity exits the REPL cleanly before sending a new command. Previous
+  versions of Paneity hard-coded this behaviour; it is now opt-in via config.
 
 ## Never Asked Questions
 

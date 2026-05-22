@@ -41,16 +41,18 @@ describe("terminate_foreground (unit)", function()
     paneity._kill = function(pid, sig) table.insert(kills, { pid = pid, sig = sig }) end
   end)
 
-  it("returns true and sends no keys when shell is already foreground", function()
-    setup_stubs(100, { 100 })
+  it("sends C-c and returns true even when shell is already foreground", function()
+    -- Lazy-clear still happens up front (stale state cleared), but C-c is now
+    -- sent unconditionally so it can clear any partial command at the prompt.
+    setup_stubs(100, { 100, 100, 100 })
     paneity.last_paneity_command = "stale"
 
     local ok = paneity._terminate_foreground("%1", "echo new")
 
     assert.is_true(ok)
-    assert.are.same({}, sent_keys)
+    assert.are.same({ "C-c" }, sent_keys)
     assert.are.same({}, kills)
-    assert.is_nil(paneity.last_paneity_command)  -- lazy clear
+    assert.is_nil(paneity.last_paneity_command)
   end)
 
   it("always sends C-c on first step, even when foreground is 'bash'", function()
