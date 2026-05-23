@@ -52,6 +52,12 @@ local function count_panes(session)
   return count
 end
 
+local function random_token()
+  math.randomseed(os.time() + math.floor(os.clock() * 1e6))
+  return string.format("%08x%08x",
+    math.random(0, 2 ^ 31 - 1), math.random(0, 2 ^ 31 - 1))
+end
+
 describe("core workflow", function()
   local tmux_tmpdir
   local session = "paneity_core_workflow"
@@ -122,5 +128,24 @@ describe("core workflow", function()
     end, 3000)
     assert.is_true(got_new_pane,
       "expected paneity to create a second pane within 3s")
+
+    -- Step 2: set and run a command. <leader>tc -> M.new_command opens
+    -- vim.ui.input. Type the command, then Enter -> M.run runs it in the
+    -- paneity-created pane, which appends one line containing TOKEN to
+    -- log_file.
+    local token = random_token()
+    local user_command = string.format("echo %s >> %s", token, log_file)
+
+    tmux(string.format("send-keys -t %s Space t c", session))
+    tmux(string.format("send-keys -t %s %s Enter",
+      session, vim.fn.shellescape(user_command)))
+
+    local first_run_done = wait_until(function()
+      local lines = read_lines(log_file)
+      return #lines >= 1
+    end, 5000)
+    assert.is_true(first_run_done,
+      "expected the command to write to the log within 5s")
+    assert.are.same({ token }, read_lines(log_file))
   end)
 end)
