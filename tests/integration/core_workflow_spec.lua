@@ -111,5 +111,16 @@ describe("core workflow", function()
 
     -- Initial state: one pane in the session.
     assert.are.equal(1, count_panes(session))
+
+    -- Step 1: activate paneity. <leader>tp -> M.toggle -> M.set_target_pane
+    -- -> choose_tmux_pane. Only one pane exists (excluding current), so the
+    -- menu has just "New pane" and the UI is bypassed: open_new_pane runs.
+    tmux(string.format("send-keys -t %s Space t p", session))
+
+    local got_new_pane = wait_until(function()
+      return count_panes(session) == 2
+    end, 3000)
+    assert.is_true(got_new_pane,
+      "expected paneity to create a second pane within 3s")
   end)
 end)
