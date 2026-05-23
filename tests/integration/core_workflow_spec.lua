@@ -147,5 +147,17 @@ describe("core workflow", function()
     assert.is_true(first_run_done,
       "expected the command to write to the log within 5s")
     assert.are.same({ token }, read_lines(log_file))
+
+    -- Step 3: repeat. <leader><leader> -> M.repeat_command ->
+    -- M.run(M.previous_command). The same command re-runs in the paneity
+    -- pane, appending a second TOKEN line to log_file.
+    tmux(string.format("send-keys -t %s Space Space", session))
+
+    local repeat_done = wait_until(function()
+      return #read_lines(log_file) >= 2
+    end, 5000)
+    assert.is_true(repeat_done,
+      "expected repeat to add a second line within 5s")
+    assert.are.same({ token, token }, read_lines(log_file))
   end)
 end)
