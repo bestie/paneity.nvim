@@ -10,6 +10,10 @@
 -- the tmux pane and drive it entirely via `tmux send-keys` — no paneity API
 -- is called from the test-runner nvim, and no internal seams are stubbed.
 
+local repo_root = vim.fn.fnamemodify(
+  vim.fn.resolve(debug.getinfo(1, "S").source:sub(2)), ":p:h:h:h"
+)
+
 local function trim(s)
   return (s:gsub("^%s*(.-)%s*$", "%1"))
 end
@@ -51,10 +55,45 @@ end
 describe("core workflow", function()
   local tmux_tmpdir
   local session = "paneity_core_workflow"
+  local ready_marker, log_file, inner_init, edit_file
 
   before_each(function()
     tmux_tmpdir = trim(vim.fn.system("mktemp -d"))
     vim.env.TMUX_TMPDIR = tmux_tmpdir
+
+    ready_marker = tmux_tmpdir .. "/ready"
+    log_file = tmux_tmpdir .. "/cmd.log"
+    inner_init = tmux_tmpdir .. "/init.lua"
+    edit_file = tmux_tmpdir .. "/edit.txt"
+
+    -- A real file for nvim to open; contents don't matter to paneity.
+    vim.fn.writefile({ "edit me" }, edit_file)
+
+    -- Inner init: put paneity on the rtp, set leader BEFORE setup so
+    -- `<leader>...` mappings bind to <Space>, then signal readiness from
+    -- vim.schedule so we know the event loop is alive before the test
+    -- starts driving keystrokes.
+    vim.fn.writefile({
+      string.format("vim.opt.runtimepath:prepend(%q)", repo_root),
+      "vim.g.mapleader = ' '",
+      "require('paneity').setup({})",
+      "vim.schedule(function()",
+      string.format("  vim.fn.writefile({'ready'}, %q)", ready_marker),
+      "end)",
+    }, inner_init)
+
+    -- Detached session, single window, single pane, running nvim against
+    -- the inner init and editing edit_file.
+    tmux(string.format(
+      "new-session -d -s %s -x 200 -y 50 'nvim --clean -u %s %s'",
+      session, vim.fn.shellescape(inner_init), vim.fn.shellescape(edit_file)
+    ))
+
+    local ready = wait_until(function()
+      return file_exists(ready_marker)
+    end, 5000)
+    assert.is_true(ready,
+      "expected inner nvim to write the ready marker within 5s")
   end)
 
   after_each(function()
@@ -66,6 +105,11 @@ describe("core workflow", function()
   end)
 
   it("activates paneity, runs a command, and repeats it", function()
-    -- Filled in by subsequent tasks.
+    -- Smoke check: inner nvim is up. (before_each already asserted on the
+    -- ready marker, but checking here makes the test self-explanatory.)
+    assert.is_true(file_exists(ready_marker))
+
+    -- Initial state: one pane in the session.
+    assert.are.equal(1, count_panes(session))
   end)
 end)
