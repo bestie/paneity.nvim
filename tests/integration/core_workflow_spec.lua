@@ -9,9 +9,35 @@
 -- never touched. The difference is that here we run a real nvim *inside*
 -- the tmux pane and drive it entirely via `tmux send-keys` — no paneity API
 -- is called from the test-runner nvim, and no internal seams are stubbed.
+--
+-- About the host runtime:
+--   This spec runs under `nvim --headless` only because the project's test
+--   suite is wired through plenary-busted. The test itself does NOT exercise
+--   anything Neovim-specific from the runner side — every host-runtime call
+--   used here (file write, sleep, shell exec, env var) is a plain-Lua I/O
+--   primitive that happens to come from `vim.*`. The aliases below make
+--   this explicit: the body of the spec touches no `vim.` prefixes, so a
+--   reader can see at a glance that the runner could be standalone busted
+--   plus a few luarocks deps with no change in semantics.
+--
+--   Note: `vim.*` references INSIDE the inner-init string are different —
+--   those run inside the spawned inner nvim and are real uses of the
+--   Neovim API.
 
-local repo_root = vim.fn.fnamemodify(
-  vim.fn.resolve(debug.getinfo(1, "S").source:sub(2)), ":p:h:h:h"
+-- Host-runtime aliases. Nothing below uses `vim.*` directly.
+local sys          = vim.fn.system
+local writefile    = vim.fn.writefile
+local shellescape  = vim.fn.shellescape
+local filereadable = vim.fn.filereadable
+local fnamemodify  = vim.fn.fnamemodify
+local resolve      = vim.fn.resolve
+local wait         = vim.wait
+local function setenv(name, value)
+  vim.env[name] = value
+end
+
+local repo_root = fnamemodify(
+  resolve(debug.getinfo(1, "S").source:sub(2)), ":p:h:h:h"
 )
 
 local function trim(s)
@@ -19,16 +45,16 @@ local function trim(s)
 end
 
 local function tmux(args)
-  return trim(vim.fn.system("tmux " .. args))
+  return trim(sys("tmux " .. args))
 end
 
 local function wait_until(predicate, timeout_ms, interval_ms)
   interval_ms = interval_ms or 50
-  return vim.wait(timeout_ms, predicate, interval_ms)
+  return wait(timeout_ms, predicate, interval_ms)
 end
 
 local function file_exists(path)
-  return vim.fn.filereadable(path) == 1
+  return filereadable(path) == 1
 end
 
 local function read_lines(path)
@@ -64,8 +90,8 @@ describe("core workflow", function()
   local ready_marker, log_file, inner_init, edit_file
 
   before_each(function()
-    tmux_tmpdir = trim(vim.fn.system("mktemp -d"))
-    vim.env.TMUX_TMPDIR = tmux_tmpdir
+    tmux_tmpdir = trim(sys("mktemp -d"))
+    setenv("TMUX_TMPDIR", tmux_tmpdir)
 
     ready_marker = tmux_tmpdir .. "/ready"
     log_file = tmux_tmpdir .. "/cmd.log"
@@ -73,13 +99,14 @@ describe("core workflow", function()
     edit_file = tmux_tmpdir .. "/edit.txt"
 
     -- A real file for nvim to open; contents don't matter to paneity.
-    vim.fn.writefile({ "edit me" }, edit_file)
+    writefile({ "edit me" }, edit_file)
 
     -- Inner init: put paneity on the rtp, set leader BEFORE setup so
     -- `<leader>...` mappings bind to <Space>, then signal readiness from
     -- vim.schedule so we know the event loop is alive before the test
-    -- starts driving keystrokes.
-    vim.fn.writefile({
+    -- starts driving keystrokes. The `vim.*` references here are real
+    -- Neovim API calls, executed by the inner nvim — not host-runtime.
+    writefile({
       string.format("vim.opt.runtimepath:prepend(%q)", repo_root),
       "vim.g.mapleader = ' '",
       "require('paneity').setup({})",
@@ -92,7 +119,7 @@ describe("core workflow", function()
     -- the inner init and editing edit_file.
     tmux(string.format(
       "new-session -d -s %s -x 200 -y 50 'nvim --clean -u %s %s'",
-      session, vim.fn.shellescape(inner_init), vim.fn.shellescape(edit_file)
+      session, shellescape(inner_init), shellescape(edit_file)
     ))
 
     local ready = wait_until(function()
@@ -103,11 +130,11 @@ describe("core workflow", function()
   end)
 
   after_each(function()
-    vim.fn.system("tmux kill-server")
+    sys("tmux kill-server")
     if tmux_tmpdir and tmux_tmpdir ~= "" then
-      vim.fn.system("rm -rf " .. vim.fn.shellescape(tmux_tmpdir))
+      sys("rm -rf " .. shellescape(tmux_tmpdir))
     end
-    vim.env.TMUX_TMPDIR = nil
+    setenv("TMUX_TMPDIR", nil)
   end)
 
   it("activates paneity, runs a command, and repeats it", function()
@@ -138,7 +165,7 @@ describe("core workflow", function()
 
     tmux(string.format("send-keys -t %s Space t c", session))
     tmux(string.format("send-keys -t %s %s Enter",
-      session, vim.fn.shellescape(user_command)))
+      session, shellescape(user_command)))
 
     local first_run_done = wait_until(function()
       local lines = read_lines(log_file)
