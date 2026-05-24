@@ -21,7 +21,7 @@ Paneity allows you to attach to an existing pane or open a new one.
 * Open a new pane (set same current directory)
 * Set an arbitrary command to run
 * Re-run the command with a keybinding (default <leader><leader>)
-* Terminates the previously started process if it's still running
+* Attempts to quit running processes with ctrl-c (configuratble)
 * Can scroll the attached pane up and down without leaving Neovim (default <PageUp>/<PageDown>)
 * Configurable tmux splitting
 * Adds a marker to the tmux border of the selected pane (configuratble marker)
