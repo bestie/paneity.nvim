@@ -475,6 +475,7 @@ M.defaults = {
   split_direction = nil,
   split_size = nil,
   split_percentage_size = nil,
+  shell = "bash",
   termination = {
     key_sequence    = { "C-c", "C-\\" },
     send_term       = true,
