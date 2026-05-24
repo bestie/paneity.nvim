@@ -113,4 +113,28 @@ describe("popup-shell command input", function()
     assert.is_false(fs.exists(log_file),
       "expected no command to have been sent to the target")
   end)
+
+  it("sources the user's bashrc inside the popup", function()
+    activate_paneity()
+
+    session:send_keys("Space t c")
+    assert.is_true(session:wait_for_popup_session(),
+      "expected popup session within 3s")
+    assert.is_true(session:wait_for_popup_prompt(),
+      "expected popup bash prompt within 5s")
+
+    -- The fixture .bashrc sets PS1='paneity_test> '. If we see that
+    -- string in the popup pane, bash inside the popup sourced our
+    -- ~/.bashrc — which is what "user init was loaded" means in
+    -- practice. wait_for_popup_prompt already polls for this; the
+    -- explicit assertion documents the intent of the test.
+    local popup_text = session:popup_pane_text()
+    assert.is_truthy(popup_text:find("paneity_test>", 1, true),
+      "expected fixture PS1 in popup, proving .bashrc was sourced; got: "
+      .. popup_text)
+
+    -- Cancel so after_each can tear down cleanly.
+    session:send_keys_to_popup("C-c")
+    assert.is_true(session:wait_for_no_popup_session())
+  end)
 end)
