@@ -4,187 +4,74 @@
 --   open a file → activate paneity (creates new pane) → set & run a
 --   command → repeat it.
 --
--- Strategy mirrors tests/integration/terminate_foreground_spec.lua: spin up
--- an isolated tmux server via TMUX_TMPDIR so the developer's real session is
--- never touched. The difference is that here we run a real nvim *inside*
--- the tmux pane and drive it entirely via `tmux send-keys` — no paneity API
--- is called from the test-runner nvim, and no internal seams are stubbed.
+-- Strategy: a real nvim runs *inside* a tmux pane in an isolated tmux
+-- server, and the test drives it entirely via `tmux send-keys`. No
+-- paneity API is called from the test-runner nvim and no internal seams
+-- are stubbed.
 --
--- About the host runtime:
---   This spec runs under `nvim --headless` only because the project's test
---   suite is wired through plenary-busted. The test itself does NOT exercise
---   anything Neovim-specific from the runner side — every host-runtime call
---   used here (file write, sleep, shell exec, env var) is a plain-Lua I/O
---   primitive that happens to come from `vim.*`. The aliases below make
---   this explicit: the body of the spec touches no `vim.` prefixes, so a
---   reader can see at a glance that the runner could be standalone busted
---   plus a few luarocks deps with no change in semantics.
---
---   Note: `vim.*` references INSIDE the inner-init string are different —
---   those run inside the spawned inner nvim and are real uses of the
---   Neovim API.
+-- The generic mechanics (isolated tmux server, file I/O, polling,
+-- launching nvim inside a tmux pane) are factored into helpers under
+-- `tests/integration/support/`. The spec body adds a thin layer of
+-- intention-revealing locals on top so each step of the workflow names
+-- the user-facing action it drives.
 
--- Host-runtime aliases. Nothing below uses `vim.*` directly.
-local sys          = vim.fn.system
-local writefile    = vim.fn.writefile
-local shellescape  = vim.fn.shellescape
-local filereadable = vim.fn.filereadable
-local fnamemodify  = vim.fn.fnamemodify
-local resolve      = vim.fn.resolve
-local wait         = vim.wait
-local function setenv(name, value)
-  vim.env[name] = value
-end
-
-local repo_root = fnamemodify(
-  resolve(debug.getinfo(1, "S").source:sub(2)), ":p:h:h:h"
-)
-
-local function trim(s)
-  return (s:gsub("^%s*(.-)%s*$", "%1"))
-end
-
-local function tmux(args)
-  return trim(sys("tmux " .. args))
-end
-
-local function wait_until(predicate, timeout_ms, interval_ms)
-  interval_ms = interval_ms or 50
-  return wait(timeout_ms, predicate, interval_ms)
-end
-
-local function file_exists(path)
-  return filereadable(path) == 1
-end
-
-local function read_lines(path)
-  local f = io.open(path, "r")
-  if not f then return {} end
-  local lines = {}
-  for line in f:lines() do
-    table.insert(lines, line)
-  end
-  f:close()
-  return lines
-end
-
-local function count_panes(session)
-  local output = tmux(string.format("list-panes -t %s -F '#{pane_id}'", session))
-  if output == "" then return 0 end
-  local count = 0
-  for _ in string.gmatch(output, "[^\n]+") do
-    count = count + 1
-  end
-  return count
-end
-
-local function random_token()
-  math.randomseed(os.time() + math.floor(os.clock() * 1e6))
-  return string.format("%08x%08x",
-    math.random(0, 2 ^ 31 - 1), math.random(0, 2 ^ 31 - 1))
-end
+local tmux_session = require("tests.integration.support.tmux_session")
+local fs           = require("tests.integration.support.fs")
+local wait         = require("tests.integration.support.wait")
 
 describe("core workflow", function()
-  local tmux_tmpdir
-  local session = "paneity_core_workflow"
-  local ready_marker, log_file, inner_init, edit_file
+  local session
+  local log_file
 
   before_each(function()
-    tmux_tmpdir = trim(sys("mktemp -d"))
-    setenv("TMUX_TMPDIR", tmux_tmpdir)
-
-    ready_marker = tmux_tmpdir .. "/ready"
-    log_file = tmux_tmpdir .. "/cmd.log"
-    inner_init = tmux_tmpdir .. "/init.lua"
-    edit_file = tmux_tmpdir .. "/edit.txt"
-
-    -- A real file for nvim to open; contents don't matter to paneity.
-    writefile({ "edit me" }, edit_file)
-
-    -- Inner init: put paneity on the rtp, set leader BEFORE setup so
-    -- `<leader>...` mappings bind to <Space>, then signal readiness from
-    -- vim.schedule so we know the event loop is alive before the test
-    -- starts driving keystrokes. The `vim.*` references here are real
-    -- Neovim API calls, executed by the inner nvim — not host-runtime.
-    writefile({
-      string.format("vim.opt.runtimepath:prepend(%q)", repo_root),
-      "vim.g.mapleader = ' '",
-      "require('paneity').setup({})",
-      "vim.schedule(function()",
-      string.format("  vim.fn.writefile({'ready'}, %q)", ready_marker),
-      "end)",
-    }, inner_init)
-
-    -- Detached session, single window, single pane, running nvim against
-    -- the inner init and editing edit_file.
-    tmux(string.format(
-      "new-session -d -s %s -x 200 -y 50 'nvim --clean -u %s %s'",
-      session, shellescape(inner_init), shellescape(edit_file)
-    ))
-
-    local ready = wait_until(function()
-      return file_exists(ready_marker)
-    end, 5000)
-    assert.is_true(ready,
-      "expected inner nvim to write the ready marker within 5s")
+    session  = tmux_session.start({ name = "paneity_core_workflow" })
+    log_file = session:path("cmd.log")
+    session:start_nvim()
   end)
 
   after_each(function()
-    sys("tmux kill-server")
-    if tmux_tmpdir and tmux_tmpdir ~= "" then
-      sys("rm -rf " .. shellescape(tmux_tmpdir))
-    end
-    setenv("TMUX_TMPDIR", nil)
+    session:destroy()
   end)
 
-  it("activates paneity, runs a command, and repeats it", function()
-    -- Smoke check: inner nvim is up. (before_each already asserted on the
-    -- ready marker, but checking here makes the test self-explanatory.)
-    assert.is_true(file_exists(ready_marker))
-
-    -- Initial state: one pane in the session.
-    assert.are.equal(1, count_panes(session))
-
-    -- Step 1: activate paneity. <leader>tp -> M.toggle -> M.set_target_pane
-    -- -> choose_tmux_pane. Only one pane exists (excluding current), so the
-    -- menu has just "New pane" and the UI is bypassed: open_new_pane runs.
-    tmux(string.format("send-keys -t %s Space t p", session))
-
-    local got_new_pane = wait_until(function()
-      return count_panes(session) == 2
-    end, 3000)
-    assert.is_true(got_new_pane,
+  local function activate_paneity()
+    -- <leader>tp -> M.toggle -> M.set_target_pane -> choose_tmux_pane.
+    -- Only one pane exists (excluding current), so the menu has just
+    -- "New pane" and the UI is bypassed: open_new_pane runs.
+    session:send_keys("Space t p")
+    assert.is_true(session:wait_for_pane_count(2),
       "expected paneity to create a second pane within 3s")
+  end
 
-    -- Step 2: set and run a command. <leader>tc -> M.new_command opens
-    -- vim.ui.input. Type the command, then Enter -> M.run runs it in the
-    -- paneity-created pane, which appends one line containing TOKEN to
-    -- log_file.
-    local token = random_token()
-    local user_command = string.format("echo %s >> %s", token, log_file)
+  local function set_and_run(command)
+    -- <leader>tc -> M.new_command opens vim.ui.input. Type the
+    -- command, then Enter -> M.run runs it in the paneity pane.
+    session:send_keys("Space t c")
+    session:send_keys(string.format("%s Enter", vim.fn.shellescape(command)))
+  end
 
-    tmux(string.format("send-keys -t %s Space t c", session))
-    tmux(string.format("send-keys -t %s %s Enter",
-      session, shellescape(user_command)))
+  local function repeat_last_command()
+    -- <leader><leader> -> M.repeat_command -> M.run(M.previous_command).
+    session:send_keys("Space Space")
+  end
 
-    local first_run_done = wait_until(function()
-      local lines = read_lines(log_file)
-      return #lines >= 1
-    end, 5000)
-    assert.is_true(first_run_done,
-      "expected the command to write to the log within 5s")
-    assert.are.same({ token }, read_lines(log_file))
+  local function wait_for_log_lines(n)
+    assert.is_true(wait.until_true(function()
+      return #fs.read_lines(log_file) >= n
+    end, 5000), string.format("expected %d log line(s) within 5s", n))
+  end
 
-    -- Step 3: repeat. <leader><leader> -> M.repeat_command ->
-    -- M.run(M.previous_command). The same command re-runs in the paneity
-    -- pane, appending a second TOKEN line to log_file.
-    tmux(string.format("send-keys -t %s Space Space", session))
+  it("activates paneity, runs a command, and repeats it", function()
+    assert.are.equal(1, session:pane_count())
 
-    local repeat_done = wait_until(function()
-      return #read_lines(log_file) >= 2
-    end, 5000)
-    assert.is_true(repeat_done,
-      "expected repeat to add a second line within 5s")
-    assert.are.same({ token, token }, read_lines(log_file))
+    activate_paneity()
+
+    local token = fs.random_token()
+    set_and_run(string.format("echo %s >> %s", token, log_file))
+    wait_for_log_lines(1)
+    assert.are.same({ token }, fs.read_lines(log_file))
+
+    repeat_last_command()
+    wait_for_log_lines(2)
+    assert.are.same({ token, token }, fs.read_lines(log_file))
   end)
 end)
