@@ -29,6 +29,17 @@ describe("terminate_foreground", function()
     session     = tmux_session.start({ name = "paneity_terminate_foreground" })
     log_file    = session:path("cmd.log")
     signals_log = session:path("signals.log")
+    local REPO_ROOT = vim.fn.fnamemodify(
+      vim.fn.resolve(debug.getinfo(1, "S").source:sub(2)), ":p:h:h:h")
+    local POPUP_HOME = REPO_ROOT .. "/tests/integration/support/popup_home"
+    session:start_nvim({
+      init_lines = {
+        "vim.env.HOME = " .. string.format("%q", POPUP_HOME),
+        string.format("vim.opt.runtimepath:prepend(%q)", REPO_ROOT),
+        "vim.g.mapleader = ' '",
+        "require('paneity').setup({})",
+      },
+    })
   end)
 
   after_each(function()
@@ -52,8 +63,24 @@ describe("terminate_foreground", function()
   end
 
   local function set_and_run(command)
+    -- <leader>tc -> M.new_command -> bash popup. Wait for the popup
+    -- helper session to appear, clear the default prefill (Ctrl-A
+    -- to move to BOL, Ctrl-K to kill to EOL), type the command,
+    -- press Enter -> bash captures and exits -> popup closes ->
+    -- M.run sends the command to the paneity pane.
     session:send_keys("Space t c")
-    session:send_keys(string.format("%s Enter", vim.fn.shellescape(command)))
+    assert.is_true(session:wait_for_popup_session(),
+      "expected popup session within 3s")
+    assert.is_true(session:wait_for_popup_prompt(),
+      "expected popup bash prompt within 5s")
+
+    -- Clear any prefill, then type the command, then Enter.
+    session:send_keys_to_popup("C-a C-k")
+    session:send_keys_to_popup(string.format("%s Enter",
+      vim.fn.shellescape(command)))
+
+    assert.is_true(session:wait_for_no_popup_session(),
+      "expected popup session to close after Enter within 3s")
   end
 
   local function wait_for_log_lines(path, n)
@@ -72,7 +99,6 @@ describe("terminate_foreground", function()
   end
 
   it("sends SIGINT to a foreground blocker then runs the new command", function()
-    session:start_nvim()
     local target = activate_paneity()
 
     -- Start the blocker via tmux directly, NOT through paneity. This
@@ -93,7 +119,6 @@ describe("terminate_foreground", function()
   end)
 
   it("escalates to SIGQUIT when the foreground process ignores SIGINT", function()
-    session:start_nvim()
     activate_paneity()
 
     -- A Lua script run via `nvim -l` keeps a libuv loop alive that
@@ -129,20 +154,20 @@ describe("terminate_foreground", function()
   end)
 
   it("sends C-c, blocks escalation, and prompts when paneity didn't start the foreground process", function()
-    -- The prompt opens via `vim.fn.confirm` inside the *inner* nvim,
-    -- so we stub _prompt_termination_choice via extra_init_lines.
-    -- The stub flags a marker file (so the test can observe that the
-    -- prompt was invoked) and returns "cancel" so the new command is
-    -- skipped.
+    -- The prompt opens via `vim.fn.confirm` inside the *inner* nvim.
+    -- Since before_each already launched nvim, inject the stub via a
+    -- :lua command sent to the running session. The stub flags a marker
+    -- file (so the test can observe that the prompt was invoked) and
+    -- returns "cancel" so the new command is skipped.
     local prompt_marker = session:path("prompted")
-    session:start_nvim({
-      extra_init_lines = {
-        "require('paneity')._prompt_termination_choice = function()",
-        string.format("  vim.fn.writefile({'prompted'}, %q)", prompt_marker),
-        "  return 'cancel'",
-        "end",
-      },
-    })
+    local stub_cmd = string.format(
+      ":lua require('paneity')._prompt_termination_choice = " ..
+      "function() vim.fn.writefile({'prompted'}, %q) return 'cancel' end",
+      prompt_marker)
+    session:send_keys(vim.fn.shellescape(stub_cmd) .. " Enter")
+    -- Give nvim a moment to process the command before we proceed.
+    vim.wait(200, function() return false end)
+
     local target = activate_paneity()
 
     -- The QUIT trap is load-bearing: bash would otherwise exit

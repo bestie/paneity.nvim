@@ -31,7 +31,17 @@ describe("core workflow", function()
   before_each(function()
     session  = tmux_session.start({ name = "paneity_core_workflow" })
     log_file = session:path("cmd.log")
-    session:start_nvim()
+    local REPO_ROOT = vim.fn.fnamemodify(
+      vim.fn.resolve(debug.getinfo(1, "S").source:sub(2)), ":p:h:h:h")
+    local POPUP_HOME = REPO_ROOT .. "/tests/integration/support/popup_home"
+    session:start_nvim({
+      init_lines = {
+        "vim.env.HOME = " .. string.format("%q", POPUP_HOME),
+        string.format("vim.opt.runtimepath:prepend(%q)", REPO_ROOT),
+        "vim.g.mapleader = ' '",
+        "require('paneity').setup({})",
+      },
+    })
   end)
 
   after_each(function()
@@ -55,10 +65,24 @@ describe("core workflow", function()
   end
 
   local function set_and_run(command)
-    -- <leader>tc -> M.new_command opens vim.ui.input. Type the
-    -- command, then Enter -> M.run runs it in the paneity pane.
+    -- <leader>tc -> M.new_command -> bash popup. Wait for the popup
+    -- helper session to appear, clear the default prefill (Ctrl-A
+    -- to move to BOL, Ctrl-K to kill to EOL), type the command,
+    -- press Enter -> bash captures and exits -> popup closes ->
+    -- M.run sends the command to the paneity pane.
     session:send_keys("Space t c")
-    session:send_keys(string.format("%s Enter", vim.fn.shellescape(command)))
+    assert.is_true(session:wait_for_popup_session(),
+      "expected popup session within 3s")
+    assert.is_true(session:wait_for_popup_prompt(),
+      "expected popup bash prompt within 5s")
+
+    -- Clear any prefill, then type the command, then Enter.
+    session:send_keys_to_popup("C-a C-k")
+    session:send_keys_to_popup(string.format("%s Enter",
+      vim.fn.shellescape(command)))
+
+    assert.is_true(session:wait_for_no_popup_session(),
+      "expected popup session to close after Enter within 3s")
   end
 
   local function repeat_last_command()
