@@ -104,6 +104,47 @@ function M.start(opts)
     return #self:pane_ids()
   end
 
+  -- Return the name of the active paneity popup helper session, or
+  -- nil if none exists in this sandbox's tmux server. The adapter
+  -- names sessions `paneity-popup-<16-hex>`.
+  function session:popup_session_name()
+    local out = tmux_cmd("list-sessions -F '#{session_name}' 2>/dev/null")
+    return out:match("(paneity%-popup%-%x+)")
+  end
+
+  function session:wait_for_popup_session(timeout_ms)
+    return vim.wait(timeout_ms or 3000, function()
+      return self:popup_session_name() ~= nil
+    end, 50)
+  end
+
+  function session:wait_for_no_popup_session(timeout_ms)
+    return vim.wait(timeout_ms or 3000, function()
+      return self:popup_session_name() == nil
+    end, 50)
+  end
+
+  -- Capture-pane on the popup helper session's only pane.
+  function session:popup_pane_text()
+    local name = self:popup_session_name()
+    if not name then return "" end
+    return tmux_cmd(string.format(
+      "capture-pane -t %s:0.0 -p", name))
+  end
+
+  function session:send_keys_to_popup(payload)
+    local name = self:popup_session_name()
+    assert(name, "send_keys_to_popup: no popup session is active")
+    tmux_cmd(string.format(
+      "send-keys -t %s:0.0 %s", name, payload))
+  end
+
+  function session:wait_for_popup_prompt(timeout_ms)
+    return vim.wait(timeout_ms or 5000, function()
+      return self:popup_pane_text():find("paneity_test>", 1, true) ~= nil
+    end, 50)
+  end
+
   function session:wait_for_pane_count(n, timeout_ms)
     return vim.wait(timeout_ms or 3000, function()
       return self:pane_count() == n
