@@ -174,7 +174,15 @@ end
 
 local function mark_pane(pane_id, marker)
   local tmux_border_format = shell_exec("tmux show-option -g pane-border-format")
-  local new_tmux_border_format = string.gsub(tmux_border_format, "#P", marker .. "#P", 1)
+  -- tmux's default `pane-border-format` uses `#{pane_index}`; older
+  -- configs may still use the `#P` short alias. Try the long form
+  -- first, fall back to the short.
+  local new_tmux_border_format, n = string.gsub(
+    tmux_border_format, "#{pane_index}", marker .. "#{pane_index}", 1)
+  if n == 0 then
+    new_tmux_border_format = string.gsub(
+      tmux_border_format, "#P", marker .. "#P", 1)
+  end
   shell_exec(string.format("tmux set-option -p -t %s %s", pane_id, new_tmux_border_format))
 end
 
