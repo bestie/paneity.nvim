@@ -1,223 +1,187 @@
--- Integration test for paneity's terminate_foreground (SIGINT happy path).
+-- tests/integration/terminate_foreground_spec.lua
 --
--- Strategy: spin up an isolated tmux server by setting TMUX_TMPDIR to a fresh
--- temp dir. Both `vim.fn.system` calls here and the plugin's `io.popen` calls
--- pick this up, so all `tmux` invocations share the same private socket and
--- never touch the developer's real session.
+-- Integration tests for paneity's foreground-termination behavior:
+-- the C-c → C-\\ → kill -TERM escalation ladder, and the UI prompt
+-- that fires when the ladder gives up.
+--
+-- Strategy mirrors `core_workflow_spec`: a real nvim runs *inside* a
+-- tmux pane in an isolated tmux server, and each spec drives it via
+-- `tmux send-keys` against paneity's documented keybindings. No
+-- paneity API is called from the test-runner nvim; the only direct
+-- tmux send-keys against the *target* pane are used to start
+-- processes paneity itself did NOT launch (i.e. to exercise the
+-- ownership gate).
+--
+-- Generic plumbing (isolated tmux server, file I/O, polling,
+-- launching nvim inside a tmux pane) lives in
+-- `tests/integration/support/`.
 
-local function trim(s)
-  return (s:gsub("^%s*(.-)%s*$", "%1"))
-end
-
-local function tmux(args)
-  return trim(vim.fn.system("tmux " .. args))
-end
-
-local function capture_pane(pane_id)
-  return vim.fn.system("tmux capture-pane -p -t " .. pane_id)
-end
-
-local function wait_until(predicate, timeout_ms, interval_ms)
-  interval_ms = interval_ms or 50
-  return vim.wait(timeout_ms, predicate, interval_ms)
-end
+local tmux_session = require("tests.integration.support.tmux_session")
+local fs           = require("tests.integration.support.fs")
+local wait         = require("tests.integration.support.wait")
 
 describe("terminate_foreground", function()
-  local tmux_tmpdir
-  local pane_id
-  local session = "paneity_test"
+  local session
+  local log_file
+  local signals_log
 
   before_each(function()
-    tmux_tmpdir = trim(vim.fn.system("mktemp -d"))
-    vim.env.TMUX_TMPDIR = tmux_tmpdir
-
-    -- Detached session so tmux won't try to attach to a TTY.
-    tmux(string.format("new-session -d -s %s -x 200 -y 50", session))
-    pane_id = tmux(string.format("display -p -t %s '#{pane_id}'", session))
-    assert.is_truthy(pane_id:match("^%%%d+$"))
-
-    package.loaded["paneity"] = nil
-    local paneity = require("paneity")
-    paneity.setup({})
-    paneity.set_target_pane_id(pane_id)
+    session     = tmux_session.start({ name = "paneity_terminate_foreground" })
+    log_file    = session:path("cmd.log")
+    signals_log = session:path("signals.log")
   end)
 
   after_each(function()
-    -- Clear target_pane_id on the live module *before* killing the server, so
-    -- the VimLeave cleanup autocmd (which closes over M) doesn't try to talk
-    -- to a dead socket when nvim exits.
-    require("paneity").target_pane_id = nil
-
-    vim.fn.system("tmux kill-server")
-    if tmux_tmpdir and tmux_tmpdir ~= "" then
-      vim.fn.system("rm -rf " .. vim.fn.shellescape(tmux_tmpdir))
-    end
-    vim.env.TMUX_TMPDIR = nil
-    package.loaded["paneity"] = nil
+    session:destroy()
   end)
 
+  local function activate_paneity()
+    -- <leader>tp -> M.toggle -> M.set_target_pane -> choose_tmux_pane.
+    -- With only the nvim pane in the session, the menu collapses to
+    -- "New pane" and open_new_pane runs. Returns the new pane's id
+    -- (the one that isn't the inner nvim's pane).
+    session:send_keys("Space t p")
+    assert.is_true(session:wait_for_pane_count(2),
+      "expected paneity to create a target pane within 3s")
+    for _, id in ipairs(session:pane_ids()) do
+      if id ~= session.nvim_pane_id then
+        return id
+      end
+    end
+    error("could not find paneity target pane id")
+  end
+
+  local function set_and_run(command)
+    session:send_keys("Space t c")
+    session:send_keys(string.format("%s Enter", vim.fn.shellescape(command)))
+  end
+
+  local function wait_for_log_lines(path, n)
+    return wait.until_true(function()
+      return #fs.read_lines(path) >= n
+    end, 5000)
+  end
+
+  local function wait_for_log_content(path, needle)
+    return wait.until_true(function()
+      for _, line in ipairs(fs.read_lines(path)) do
+        if line:find(needle, 1, true) then return true end
+      end
+      return false
+    end, 3000)
+  end
+
   it("sends SIGINT to a foreground blocker then runs the new command", function()
-    -- Start a long-running blocker in the target pane.
-    tmux(string.format("send-keys -t %s 'sleep 30' C-m", pane_id))
+    session:start_nvim()
+    local target = activate_paneity()
 
-    -- Wait for the foreground command to become `sleep`.
-    local saw_sleep = wait_until(function()
-      local fg = trim(vim.fn.system(
-        string.format("tmux display -p -t %s '#{pane_current_command}'", pane_id)
-      ))
-      return fg == "sleep"
-    end, 2000, 50)
-    assert.is_true(saw_sleep, "expected pane_current_command to become 'sleep' within 2s")
+    -- Start the blocker via tmux directly, NOT through paneity. This
+    -- keeps M.last_paneity_command nil — step 1's C-c must still land
+    -- (always-C-c contract); since sleep responds to SIGINT, the
+    -- ladder does not need to escalate past the gate.
+    session:send_keys_to(target, "'sleep 30' Enter")
+    assert.is_true(wait.until_true(function()
+      return session:pane_current_command(target) == "sleep"
+    end, 2000), "expected pane_current_command to become 'sleep' within 2s")
 
-    -- Drive paneity: this should C-c the sleep, then send the new command.
-    require("paneity").run("echo PANEITY_OK")
+    local token = fs.random_token()
+    set_and_run(string.format("echo %s >> %s", token, log_file))
 
-    -- Poll the pane content until we see the marker.
-    local saw_marker = wait_until(function()
-      return capture_pane(pane_id):find("PANEITY_OK", 1, true) ~= nil
-    end, 2000, 50)
-
-    assert.is_true(saw_marker,
-      "expected PANEITY_OK in pane content within 2s; got:\n" .. capture_pane(pane_id))
+    assert.is_true(wait_for_log_lines(log_file, 1),
+      "expected the new command to land after C-c killed the blocker")
+    assert.are.same({ token }, fs.read_lines(log_file))
   end)
 
   it("escalates to SIGQUIT when the foreground process ignores SIGINT", function()
-    -- Lua script run via `nvim -l` — nvim is already on PATH via mise, so we
-    -- don't need any extra runtime. nvim's tpgid differs from pane_pid, so
-    -- terminate_foreground engages the ladder.
-    local script_path = tmux_tmpdir .. "/blocker.lua"
-    local sig_log = tmux_tmpdir .. "/signals.log"
+    session:start_nvim()
+    activate_paneity()
 
-    local fd = assert(io.open(script_path, "w"))
-    fd:write(table.concat({
+    -- A Lua script run via `nvim -l` keeps a libuv loop alive that
+    -- records signals. We have *paneity* run the blocker (via
+    -- <leader>tc), which sets M.last_paneity_command and so opens the
+    -- ownership gate for the next run's escalation.
+    local blocker = session:path("blocker.lua")
+    fs.write(blocker, {
       "local sig_log = arg[1]",
       "local function write(name)",
       "  local f = io.open(sig_log, 'a')",
       "  f:write(name .. '\\n')",
       "  f:close()",
       "end",
-      -- Paneity sends C-c twice (200ms apart) before escalating to SIGQUIT.
-      -- We dedupe so the log records each signal type exactly once; without
-      -- this the script would log SIGINT twice and break the strict assertion.
       "local sigint = vim.uv.new_signal()",
-      "sigint:start('sigint', function()",
-      "  write('SIGINT')",
-      "end)",
+      "sigint:start('sigint', function() write('SIGINT') end)",
       "local sigquit = vim.uv.new_signal()",
       "sigquit:start('sigquit', function() write('SIGQUIT'); os.exit(0) end)",
       "write('READY')",
       "vim.uv.run()",
-      "",
-    }, "\n"))
-    fd:close()
+    })
+    set_and_run(string.format("nvim -l %s %s", blocker, signals_log))
+    assert.is_true(wait_for_log_content(signals_log, "READY"),
+      "expected blocker to write READY within 3s")
 
-    require("paneity").run(string.format("nvim -l %s %s", script_path, sig_log))
+    local token = fs.random_token()
+    set_and_run(string.format("echo %s >> %s", token, log_file))
 
-    -- Wait for the script to install its handlers and announce READY.
-    local function read_log()
-      local f = io.open(sig_log, "r")
-      if not f then return "" end
-      local content = f:read("*a") or ""
-      f:close()
-      return content
-    end
-
-    local ready = wait_until(function()
-      return read_log():find("READY", 1, true) ~= nil
-    end, 3000, 50)
-    assert.is_true(ready, "expected script to write READY within 3s")
-
-    -- Drive paneity: C-c -> handler logs SIGINT, C-\ -> handler logs SIGQUIT and exits.
-    require("paneity").run("echo PANEITY_QUIT_OK")
-
-    local saw_marker = wait_until(function()
-      return capture_pane(pane_id):find("PANEITY_QUIT_OK", 1, true) ~= nil
-    end, 5000, 50)
-    assert.is_true(saw_marker,
-      "expected PANEITY_QUIT_OK after escalation; pane:\n" .. capture_pane(pane_id))
-
-    local lines = {}
-    for line in read_log():gmatch("[^\n]+") do
-      table.insert(lines, line)
-    end
-
-    assert.are.same({ "READY", "SIGINT", "SIGQUIT" }, lines)
+    assert.is_true(wait_for_log_lines(log_file, 1),
+      "expected the new command to land after SIGQUIT escalation")
+    assert.are.same({ token }, fs.read_lines(log_file))
+    assert.are.same({ "READY", "SIGINT", "SIGQUIT" }, fs.read_lines(signals_log))
   end)
 
-  it("sends C-c to a foreground bash script and prompts when gate blocks escalation", function()
-    -- Verifies FIXED behavior: paneity now sends C-c even when pane_current_command
-    -- is 'bash' (a running script), then the gate blocks escalation (since paneity
-    -- didn't start the script), and the prompt is invoked.
-    -- The script's QUIT trap is load-bearing: it prevents SIGQUIT from
-    -- silently killing bash (the default disposition) if the gate were ever
-    -- to wrongly escalate, so the strict `{ "READY", "SIGINT" }` assertion
-    -- catches the regression instead of passing for the wrong reason.
-    local script_path = tmux_tmpdir .. "/script.sh"
-    local sig_log = tmux_tmpdir .. "/signals.log"
+  it("sends C-c, blocks escalation, and prompts when paneity didn't start the foreground process", function()
+    -- The prompt opens via `vim.fn.confirm` inside the *inner* nvim,
+    -- so we stub _prompt_termination_choice via extra_init_lines.
+    -- The stub flags a marker file (so the test can observe that the
+    -- prompt was invoked) and returns "cancel" so the new command is
+    -- skipped.
+    local prompt_marker = session:path("prompted")
+    session:start_nvim({
+      extra_init_lines = {
+        "require('paneity')._prompt_termination_choice = function()",
+        string.format("  vim.fn.writefile({'prompted'}, %q)", prompt_marker),
+        "  return 'cancel'",
+        "end",
+      },
+    })
+    local target = activate_paneity()
 
-    local fd = assert(io.open(script_path, "w"))
-    fd:write(table.concat({
-      "log=\"$1\"",
-      "trap 'echo SIGINT >> \"$log\"' INT",
-      "trap 'echo SIGQUIT >> \"$log\"' QUIT",
-      "echo READY >> \"$log\"",
-      "while true; do read line; done",
-      "",
-    }, "\n"))
-    fd:close()
+    -- The QUIT trap is load-bearing: bash would otherwise exit
+    -- silently on SIGQUIT (default disposition), masking a regression
+    -- where the gate wrongly lets escalation through. With the trap,
+    -- the strict `{ "READY", "SIGINT" }` assertion catches it.
+    local script = session:path("script.sh")
+    fs.write(script, {
+      'log="$1"',
+      [[trap 'echo SIGINT >> "$log"' INT]],
+      [[trap 'echo SIGQUIT >> "$log"' QUIT]],
+      'echo READY >> "$log"',
+      'while true; do read line; done',
+    })
 
-    tmux(string.format("send-keys -t %s 'bash %s %s' C-m",
-      pane_id, script_path, sig_log))
+    -- Script started by tmux directly: paneity did NOT run it, so
+    -- M.last_paneity_command stays nil and the gate must block
+    -- escalation past step 1.
+    session:send_keys_to(target,
+      string.format("'bash %s %s' Enter", script, signals_log))
+    assert.is_true(wait_for_log_content(signals_log, "READY"),
+      "expected script to write READY within 3s")
+    assert.are.equal("bash", session:pane_current_command(target),
+      "precondition: pane_current_command should be 'bash' " ..
+      "(indistinguishable from an idle interactive shell)")
 
-    local function read_log()
-      local f = io.open(sig_log, "r")
-      if not f then return "" end
-      local content = f:read("*a") or ""
-      f:close()
-      return content
-    end
+    local token = fs.random_token()
+    set_and_run(string.format("echo %s >> %s", token, log_file))
 
-    local ready = wait_until(function()
-      return read_log():find("READY", 1, true) ~= nil
-    end, 3000, 50)
-    assert.is_true(ready, "expected script to write READY within 3s")
+    -- C-c lands (SIGINT trap fires), gate blocks escalation, prompt
+    -- is invoked (marker appears).
+    assert.is_true(wait_for_log_content(signals_log, "SIGINT"),
+      "expected SIGINT in signals log within 3s")
+    assert.is_true(wait.until_true(function()
+      return fs.exists(prompt_marker)
+    end, 2000), "expected the prompt to be invoked (marker file)")
 
-    -- Verify the test setup: tmux reports the foreground as plain `bash`,
-    -- indistinguishable from an idle interactive shell prompt. This is the
-    -- scenario the fix addresses.
-    local fg = trim(vim.fn.system(
-      string.format("tmux display -p -t %s '#{pane_current_command}'", pane_id)
-    ))
-    assert.are.equal("bash", fg,
-      "precondition failed: expected pane_current_command='bash' but got '" .. fg .. "'")
-
-    -- Stub the prompt to choose Cancel (no command will be sent).
-    local prompted = false
-    require("paneity")._prompt_termination_choice = function()
-      prompted = true
-      return "cancel"
-    end
-
-    require("paneity").run("echo PANEITY_OK")
-
-    -- Wait for SIGINT to land in the log (or fail fast if it doesn't).
-    local saw_signal = wait_until(function()
-      return read_log():find("SIGINT", 1, true) ~= nil
-    end, 1000, 20)
-    assert.is_true(saw_signal, "expected SIGINT in log within 1s; got: " .. read_log())
-
-    -- C-c WAS sent (SIGINT trap fired). The gate blocked escalation since
-    -- paneity didn't start the script. The prompt was invoked.
-    local lines = {}
-    for line in read_log():gmatch("[^\n]+") do
-      table.insert(lines, line)
-    end
-    assert.are.same({ "READY", "SIGINT" }, lines)
-    assert.is_true(prompted, "expected the UI prompt to be invoked")
-
-    -- And the new command was NOT sent (user picked Cancel).
-    local pane_content = capture_pane(pane_id)
-    assert.is_nil(pane_content:find("PANEITY_OK", 1, true),
-      "expected PANEITY_OK not to appear; got:\n" .. pane_content)
+    -- No SIGQUIT, and "cancel" means the new command was never sent.
+    assert.are.same({ "READY", "SIGINT" }, fs.read_lines(signals_log))
+    assert.are.same({}, fs.read_lines(log_file))
   end)
 end)
