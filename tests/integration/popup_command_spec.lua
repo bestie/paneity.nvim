@@ -90,4 +90,27 @@ describe("popup-shell command input", function()
 
     assert.are.equal(token, fs.read_lines(log_file)[1])
   end)
+
+  it("does not touch the target pane when the popup is cancelled with C-c", function()
+    activate_paneity()
+
+    session:send_keys("Space t c")
+    assert.is_true(session:wait_for_popup_session(),
+      "expected popup session within 3s")
+    assert.is_true(session:wait_for_popup_prompt(),
+      "expected popup bash prompt within 5s")
+
+    -- Ctrl-C triggers `trap 'exit 130' INT` in the rcfile. Bash exits
+    -- without writing the capture file → adapter calls cb(nil).
+    session:send_keys_to_popup("C-c")
+
+    assert.is_true(session:wait_for_no_popup_session(),
+      "expected popup session to close after C-c within 3s")
+
+    -- No log file should have been created; previous_command unchanged
+    -- (still nil since we never ran anything). The simplest assertion:
+    -- the log file is absent.
+    assert.is_false(fs.exists(log_file),
+      "expected no command to have been sent to the target")
+  end)
 end)
