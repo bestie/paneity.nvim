@@ -62,26 +62,24 @@ The `termination` config table (`M.defaults.termination`) exposes `key_sequence`
 
 ## Testing
 
-`make test` runs the full suite (unit + integration) under headless mise-managed Neovim. Both `nvim` and `tmux` are pinned in `mise.toml`; run `mise install` after a fresh clone. Tests use plenary.nvim's `PlenaryBustedDirectory`; plenary is cloned on demand into `deps/plenary.nvim` (gitignored).
+`make test` runs all tests.
 
-Two suites:
+### Integation testing is most important
 
-- `tests/unit/` — fast, no real tmux. Stubs the internal seams (below) and asserts on recorded calls. Drives `_terminate_foreground` across the decision matrix (shell-idle, paneity-owned vs not, send_term on/off, command match vs not, whitespace normalization) and `M.run`'s prompt-fallback branches (Cancel, Type anyway, kill -TERM, prompt-not-shown-on-success). Also covers the state-lifecycle invariants for `last_paneity_command`.
-- `tests/integration/` — spins up a private tmux server per test via `vim.env.TMUX_TMPDIR = $(mktemp -d)`. Both `vim.fn.system` calls in the test AND the plugin's `io.popen` calls inherit this env var, so all `tmux` invocations land on an isolated socket — the developer's real session is never touched. Cleanup runs `tmux kill-server` and removes the tmpdir. Three scenarios: SIGINT happy path (`sleep 30` started manually, C-c clears it), full SIGINT→SIGQUIT escalation ladder (nvim blocker started via `paneity.run` so the gate is satisfied), and the gate-blocks case (`bash my_script.sh` started manually — C-c reaches it, no escalation, prompt invoked).
+Integration tests aim to replicate the users experience with the highest fidelity possible.
 
-### Test stub patterns
+Integration tests run against real tmux / neovim processes spawned externally to the test process.
 
-Unit tests use a `queue()` helper that feeds successive return values to a stubbed seam. **Important polling math:** with `step_timeout_ms = 5` and `vim.wait`'s default interval of 50ms, each `wait_for_shell` invocation calls the predicate twice (immediate + at-timeout). Combined with the initial `shell_is_foreground` call at the top of `_terminate_foreground` and the direct `_tty_foreground_pgid` call inside the TERM branch, queue lengths need to be sized accordingly. The `queue()` helper sticks on the last value once exhausted, so over-padding is harmless but mis-sizing leads to "passes for the wrong reason" silently.
+As this plugin is focused on neovim use within tmux, `tmux send-keys` targeting the test tmux session offers a convenient way to test behavior without internal manipulations.
 
-### Internal seams for testability
+All features should be exercised by an integration test.
 
-Underscore-prefixed members on `M` are stubbable in unit tests. Production callers route through them too.
+New feature development should start with an integration test defining the behavior.
 
-- `M._pane_pid(pane_id)` — wraps `tmux display -p '#{pane_pid}'`. Returns number or nil.
-- `M._tty_foreground_pgid(pane_pid)` — wraps `ps -o tpgid= -p <pid>`. Returns number or nil. Has its own nil-guard on `pane_pid` so callers don't have to.
-- `M._send_keys(pane_id, key)` — wraps `tmux send-keys -t %s '%s'`. **Always single-quotes the key**, so call sites pass bare `"C-c"` / `"C-\\"` — no embedded shell quoting in the caller.
-- `M._kill(pid, signal)` — wraps `kill -SIG <pid>`. In production, always called with a numeric pid from `_tty_foreground_pgid` and the literal string `"TERM"`.
-- `M._prompt_termination_choice()` — wraps `vim.fn.confirm` with the three-button prompt. Returns `"type"`, `"cancel"`, or `"term"`.
-- `M._terminate_foreground(pane_id, new_command)` — the ladder itself; returns `true` if the shell is back in the foreground (ok to send the new command), `false` if the caller should fall back to the prompt. Takes `new_command` so the TERM gate can compare against `M.last_paneity_command`.
+### Unit testing for functions
 
-The underscore prefix marks them as "internal, may be replaced in tests."
+Unit testing is secondary but is especially useful where there is high complexity and/or many branches.
+
+While every feature should be integration tested, it is not always necessary to test every possible path.
+
+Remember that unit tests offer much less value, are often coupled to implementation and can be barrier to improvements and refactoring rather than a help.
