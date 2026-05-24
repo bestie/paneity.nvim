@@ -37,6 +37,7 @@ describe("core workflow", function()
     session:start_nvim({
       init_lines = {
         "vim.env.HOME = " .. string.format("%q", POPUP_HOME),
+        "vim.env.XDG_DATA_HOME = " .. string.format("%q", session.tmpdir .. "/xdg"),
         string.format("vim.opt.runtimepath:prepend(%q)", REPO_ROOT),
         "vim.g.mapleader = ' '",
         "require('paneity').setup({})",
