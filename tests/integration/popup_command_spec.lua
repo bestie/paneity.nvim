@@ -137,4 +137,42 @@ describe("popup-shell command input", function()
     session:send_keys_to_popup("C-c")
     assert.is_true(session:wait_for_no_popup_session())
   end)
+
+  it("uses opts.prefill = '' to suppress the default file-path prefill", function()
+    activate_paneity()
+
+    -- Invoke M.new_command directly via :lua so we can pass opts. We
+    -- need to wait for the popup session as usual, then assert the
+    -- prompt line has nothing after the prompt suffix.
+    session:send_keys(
+      vim.fn.shellescape(":lua require('paneity').new_command({ prefill = '' })")
+      .. " Enter")
+
+    assert.is_true(session:wait_for_popup_session(),
+      "expected popup session within 3s")
+    assert.is_true(session:wait_for_popup_prompt(),
+      "expected popup bash prompt within 5s")
+
+    -- Give the prefill polling timer a few ticks to NOT fire (it
+    -- shouldn't, because prefill is empty). Then capture the pane and
+    -- assert the trailing line is just the prompt with no content.
+    vim.wait(200)
+
+    local lines = {}
+    for line in (session:popup_pane_text() .. "\n"):gmatch("([^\n]*)\n") do
+      table.insert(lines, line)
+    end
+    -- Find the last non-blank line; it should end with the prompt
+    -- suffix and have nothing after it.
+    local last
+    for i = #lines, 1, -1 do
+      if lines[i] ~= "" then last = lines[i]; break end
+    end
+    assert.is_truthy(last and last:match("paneity_test>%s*$"),
+      "expected empty input after prompt; got last line: " .. tostring(last))
+
+    -- Clean up: cancel the popup so after_each can destroy the session.
+    session:send_keys_to_popup("C-c")
+    assert.is_true(session:wait_for_no_popup_session())
+  end)
 end)
