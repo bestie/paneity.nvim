@@ -115,7 +115,11 @@ function M.get_command(prefill, cb)
   vim.fn.mkdir(vim.fn.fnamemodify(histfile, ":h"), "p")
   write_file(rcfile_path, RCFILE)
 
+  -- Pass HOME explicitly so the popup bash sources the same ~/.bashrc
+  -- that the calling nvim sees, even when tmux's server was started with
+  -- a different HOME (common in tests that redirect HOME to a fixture dir).
   local env_flags = table.concat({
+    "-e HOME="             .. shesc(vim.env.HOME or ""),
     "-e PANEITY_PREFILL="  .. shesc(prefill or ""),
     "-e PANEITY_CAPTURE="  .. shesc(capture_path),
     "-e PANEITY_HISTFILE=" .. shesc(histfile),
@@ -152,7 +156,7 @@ function M.get_command(prefill, cb)
     cb(captured)
   end
 
-  local function on_popup_exit()
+  local function collect_captured()
     local raw = read_file(capture_path)
     if not raw or raw == "" or raw == "\n" then
       cleanup_and_callback(nil)
@@ -166,39 +170,75 @@ function M.get_command(prefill, cb)
     end
   end
 
+  -- Poll for the capture file (written when bash exits via Enter) or
+  -- for the helper session to disappear (e.g. C-c exit or display-popup
+  -- not available). This is the primary lifecycle mechanism: we do NOT
+  -- rely on display-popup's exit code so the adapter works even in
+  -- headless test environments where display-popup has no client.
+  local watcher = uv.new_timer()
+  watcher:start(50, 50, vim.schedule_wrap(function()
+    -- Session gone -> bash exited; read whatever was captured.
+    local sess_out = vim.fn.system(
+      "tmux list-sessions -F '#{session_name}' 2>/dev/null")
+    local session_alive = sess_out:find(session_name, 1, true) ~= nil
+
+    if vim.fn.filereadable(capture_path) == 1 or not session_alive then
+      if not watcher:is_closing() then
+        pcall(function() watcher:stop(); watcher:close() end)
+      end
+      collect_captured()
+    end
+  end))
+
+  -- Stop the watcher when cleanup runs (e.g. from an error path).
+  local original_cleanup = cleanup_and_callback
+  cleanup_and_callback = function(captured)
+    if not watcher:is_closing() then
+      pcall(function() watcher:stop(); watcher:close() end)
+    end
+    original_cleanup(captured)
+  end
+
   -- Prefill: poll for the ready marker, then send the trigger key to
   -- the helper session. PROMPT_COMMAND writes the ready file before
   -- readline starts, so the keystroke lands inside the bind -x handler
   -- which populates READLINE_LINE from $PANEITY_PREFILL.
   if prefill and prefill ~= "" then
-    local timer = uv.new_timer()
-    timer:start(25, 25, vim.schedule_wrap(function()
+    local prefill_timer = uv.new_timer()
+    prefill_timer:start(25, 25, vim.schedule_wrap(function()
       if vim.fn.filereadable(ready_path) == 1 then
-        timer:stop()
-        timer:close()
+        if not prefill_timer:is_closing() then
+          pcall(function() prefill_timer:stop(); prefill_timer:close() end)
+        end
         tmux(string.format(
           "send-keys -t %s:0.0 C-x C-p", shesc(session_name)))
       end
     end))
-    -- Safety: stop the timer if the popup exits before ready fires.
-    local original_cleanup = cleanup_and_callback
+    -- Stop prefill timer if cleanup runs before ready fires.
+    local prev_cleanup = cleanup_and_callback
     cleanup_and_callback = function(captured)
-      if not timer:is_closing() then
-        pcall(function() timer:stop(); timer:close() end)
+      if not prefill_timer:is_closing() then
+        pcall(function() prefill_timer:stop(); prefill_timer:close() end)
       end
-      original_cleanup(captured)
+      prev_cleanup(captured)
     end
   end
 
-  -- Run `display-popup -E` async. TMUX is unset so the inner
-  -- `tmux attach-session` doesn't refuse on nesting; tmux finds the
-  -- right socket via $TMUX_TMPDIR / default discovery.
+  -- Launch display-popup as best-effort visual overlay. The socket flag
+  -- ensures we reach the right tmux server even when TMUX_TMPDIR differs
+  -- between the outer test process and the inner nvim. Clearing TMUX
+  -- avoids the nesting guard; -S restores server reachability.
+  -- If display-popup fails (e.g. no attached client in headless tests),
+  -- the watcher above still detects bash exiting and calls the callback.
+  local tmux_env = vim.env.TMUX or ""
+  local socket_path = tmux_env:match("^([^,]+),") or ""
+  local socket_arg  = socket_path ~= "" and ("-S " .. socket_path .. " ") or ""
   local popup_cmd = string.format(
-    "TMUX= tmux display-popup -E 'tmux attach-session -t %s'",
-    shesc(session_name))
+    "TMUX= tmux %sdisplay-popup -E 'TMUX= tmux %sattach-session -t %s'",
+    socket_arg, socket_arg, shesc(session_name))
 
   vim.fn.jobstart({ "sh", "-c", popup_cmd }, {
-    on_exit = function() vim.schedule(on_popup_exit) end,
+    on_exit = function() end,  -- handled by watcher above
   })
 end
 

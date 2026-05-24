@@ -432,26 +432,32 @@ function M.repeat_command()
   end
 end
 
-function M.new_command(opts)
-  opts = vim.tbl_deep_extend("force", {
-    prompt = "Command to run: ",
-    prefill = "",
-    post_exec = false
-  }, opts or {})
+local function default_prefill()
+  if vim.bo.buftype ~= "" then return "" end
+  local name = vim.api.nvim_buf_get_name(0)
+  if name == "" then return "" end
+  return vim.fn.fnamemodify(name, ":.")
+end
 
-  if M.target_pane_id then
-    vim.ui.input({ prompt = opts.prompt, default = opts.prefill }, function(command)
-      if command then
-        print_message("Running command: " .. command)
-        M.run(command)
-        if opts.post_exec then
-          opts.post_exec(command)
-        end
-      end
-    end)
-  else
+function M.new_command(opts)
+  opts = vim.tbl_deep_extend("force", { post_exec = false }, opts or {})
+
+  if not M.target_pane_id then
     print_error("no target pane set.")
+    return
   end
+
+  -- nil = compute default; "" = explicit no-prefill.
+  local prefill = opts.prefill
+  if prefill == nil then prefill = default_prefill() end
+
+  require("paneity.shells")[M.config.shell].get_command(prefill, function(command)
+    if command and command ~= "" then
+      print_message("Running command: " .. command)
+      M.run(command)
+      if opts.post_exec then opts.post_exec(command) end
+    end
+  end)
 end
 
 function M.up_enter()
