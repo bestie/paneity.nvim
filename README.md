@@ -19,7 +19,7 @@ Paneity allows you to attach to an existing pane or open a new one.
 
 * Attach to an existing pane (choose with native UI or fzf-lua)
 * Open a new pane (set same current directory)
-* Set an arbitrary command to run
+* Set an arbitrary command to run via a real shell popup (see below)
 * Re-run the command with a keybinding (default <leader><leader>)
 * Attempts to quit running processes with ctrl-c (configuratble)
 * Can scroll the attached pane up and down without leaving Neovim (default <PageUp>/<PageDown>)
@@ -27,6 +27,28 @@ Paneity allows you to attach to an existing pane or open a new one.
 * Adds a marker to the tmux border of the selected pane (configuratble marker)
 * Easy status line function that can be added [lualine](https://github.com/nvim-lualine/lualine.nvim) etc.
 * Configurable key bindings
+
+## Setting a new command (`<leader>tc`)
+
+Pressing `<leader>tc` opens a popup running a real bash shell. Type your command with full filename and bash completion, alias expansion, and history — just like in any other terminal. Press Enter to send the command to the target pane; Ctrl-C cancels with no effect on the target.
+
+The popup sources your normal shell init (`~/.bashrc`, etc.) so aliases and completions work exactly as in your day-to-day shell. Paneity overrides the popup's `HISTFILE` so its history is a separate, paneity-only file (under `$XDG_DATA_HOME/paneity/history` or `~/.local/share/paneity/history`).
+
+### `M.new_command(opts)`
+
+`M.new_command(opts)` accepts:
+
+- `prefill` (`string | nil`) — initial content of the popup's command line.
+  `nil` (the default) uses the active buffer's file path relative to nvim's cwd, or
+  an empty string for non-file buffers. Pass `""` to explicitly suppress the default.
+- `post_exec` (`function | nil`) — called with the captured command string after `M.run` returns.
+
+`opts.prompt` was removed in this release; the popup shows the user's own bash prompt (`PS1`) instead of a configurable label.
+
+## Requirements
+
+- [Neovim](https://github.com/neovim/neovim) 0.8+
+- tmux **3.2 or newer** is required (uses `display-popup -E` for the new-command popup).
 
 ## Installation
 
@@ -51,6 +73,7 @@ require("paneity").setup({
   split_size = nil, -- Number rows/columns of available space (nil means tmux default)
   split_percentage_size = nil, -- Percentage of available space, takes precendence over `split_size` (nil means tmux default)
   log_level = vim.log.levels.OFF,
+  shell = "bash", -- Shell adapter for the new-command popup. Only "bash" is supported in this release.
   termination = { -- See `termination` section below for details
     key_sequence    = { "C-c", "C-\\" },
     send_term       = true,
@@ -114,6 +137,12 @@ require("paneity").setup({
   }
 })
 ```
+
+### `shell (string)`
+
+- `shell` (string, default `"bash"`) — which shell adapter to use for the new-command popup.
+  Only `"bash"` is implemented in this release; the strategy interface is designed so other
+  shells (`"zsh"`, `"fish"`) can be added without core changes.
 
 ### `termination (table)`
 
