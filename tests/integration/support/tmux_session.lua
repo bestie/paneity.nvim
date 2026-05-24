@@ -66,10 +66,17 @@ function M.start(opts)
   local tmpdir = sh("mktemp -d")
   vim.env.TMUX_TMPDIR = tmpdir
 
+  -- Force a UTF-8 locale so tmux preserves multibyte chars in option
+  -- values (e.g. paneity's emoji pane marker). With a POSIX/C locale,
+  -- tmux treats non-ASCII bytes as non-printable and replaces them
+  -- with `_` when storing styled options like `pane-border-format`.
+  local saved_lc_all = vim.env.LC_ALL
+  vim.env.LC_ALL = "C.UTF-8"
+
   tmux_cmd(string.format(
     "new-session -d -s %s -x %d -y %d", name, width, height))
 
-  local session = { name = name, tmpdir = tmpdir }
+  local session = { name = name, tmpdir = tmpdir, saved_lc_all = saved_lc_all }
 
   -- Absolute path inside this session's private tmpdir.
   function session:path(rel)
@@ -83,13 +90,18 @@ function M.start(opts)
     tmux_cmd(string.format("send-keys -t %s %s", self.name, payload))
   end
 
-  function session:pane_count()
+  function session:pane_ids()
     local out = tmux_cmd(string.format(
       "list-panes -t %s -F '#{pane_id}'", self.name))
-    if out == "" then return 0 end
-    local n = 0
-    for _ in out:gmatch("[^\n]+") do n = n + 1 end
-    return n
+    local ids = {}
+    for id in out:gmatch("[^\n]+") do
+      table.insert(ids, id)
+    end
+    return ids
+  end
+
+  function session:pane_count()
+    return #self:pane_ids()
   end
 
   function session:wait_for_pane_count(n, timeout_ms)
@@ -98,19 +110,57 @@ function M.start(opts)
     end, 50)
   end
 
+  -- Like send_keys but targeted at a specific pane id rather than the
+  -- session's active pane. Useful when a test needs to drive the
+  -- paneity-managed pane directly (e.g. to start a foreground process
+  -- that paneity itself did *not* run).
+  function session:send_keys_to(pane_id, payload)
+    tmux_cmd(string.format("send-keys -t %s %s", pane_id, payload))
+  end
+
+  function session:pane_current_command(pane_id)
+    return tmux_cmd(string.format(
+      "display -p -t %s '#{pane_current_command}'", pane_id))
+  end
+
+  -- Per-pane pane-border-format option as tmux reports it (raw output
+  -- of `show-options -p`, i.e. `pane-border-format "<value>"`). Used
+  -- by tests that need to assert paneity's marker is applied to (or
+  -- cleared from) the target pane's title bar.
+  function session:pane_border_format(pane_id)
+    return tmux_cmd(string.format(
+      "show-options -p -t %s pane-border-format", pane_id))
+  end
+
   -- start_nvim(opts):
-  --   opts.init_lines  list of Lua source lines for the inner init
-  --                    (default: paneity setup with leader=<Space>)
-  --   opts.file        optional path for nvim to open
-  --   opts.timeout_ms  ready-wait timeout (default 5000)
+  --   opts.init_lines        list of Lua source lines for the inner
+  --                          init (default: paneity setup with
+  --                          leader=<Space>)
+  --   opts.extra_init_lines  lines appended *after* init_lines, for
+  --                          test-local tweaks (e.g. stubbing a seam)
+  --                          without restating the defaults
+  --   opts.file              optional path for nvim to open
+  --   opts.timeout_ms        ready-wait timeout (default 5000)
   --
   -- Launches `nvim --clean -u <init>` in the session's shell. The
   -- composed init writes a ready marker from `vim.schedule`, and this
   -- call BLOCKS until the marker appears. Raises on timeout.
+  --
+  -- Side effect: stores `self.nvim_pane_id` so callers can identify
+  -- "the other pane(s)" once paneity creates them.
   function session:start_nvim(nvim_opts)
     nvim_opts = nvim_opts or {}
-    local init_lines = nvim_opts.init_lines or DEFAULT_INIT_LINES
     local timeout_ms = nvim_opts.timeout_ms or 5000
+
+    self.nvim_pane_id = self:pane_ids()[1]
+
+    local init_lines = {}
+    for _, line in ipairs(nvim_opts.init_lines or DEFAULT_INIT_LINES) do
+      table.insert(init_lines, line)
+    end
+    for _, line in ipairs(nvim_opts.extra_init_lines or {}) do
+      table.insert(init_lines, line)
+    end
 
     local ready_marker = self:path("ready")
     local init_path    = self:path("init.lua")
@@ -144,6 +194,7 @@ function M.start(opts)
       sh("rm -rf " .. vim.fn.shellescape(self.tmpdir))
     end
     vim.env.TMUX_TMPDIR = nil
+    vim.env.LC_ALL = self.saved_lc_all
   end
 
   return session
