@@ -166,6 +166,30 @@ function M.get_command(prefill, cb)
     end
   end
 
+  -- Prefill: poll for the ready marker, then send the trigger key to
+  -- the helper session. PROMPT_COMMAND writes the ready file before
+  -- readline starts, so the keystroke lands inside the bind -x handler
+  -- which populates READLINE_LINE from $PANEITY_PREFILL.
+  if prefill and prefill ~= "" then
+    local timer = uv.new_timer()
+    timer:start(25, 25, vim.schedule_wrap(function()
+      if vim.fn.filereadable(ready_path) == 1 then
+        timer:stop()
+        timer:close()
+        tmux(string.format(
+          "send-keys -t %s:0.0 C-x C-p", shesc(session_name)))
+      end
+    end))
+    -- Safety: stop the timer if the popup exits before ready fires.
+    local original_cleanup = cleanup_and_callback
+    cleanup_and_callback = function(captured)
+      if not timer:is_closing() then
+        pcall(function() timer:stop(); timer:close() end)
+      end
+      original_cleanup(captured)
+    end
+  end
+
   -- Run `display-popup -E` async. TMUX is unset so the inner
   -- `tmux attach-session` doesn't refuse on nesting; tmux finds the
   -- right socket via $TMUX_TMPDIR / default discovery.
