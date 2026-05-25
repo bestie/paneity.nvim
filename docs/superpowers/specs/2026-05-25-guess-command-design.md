@@ -48,9 +48,9 @@ ctx = {
   basename = "foo_spec.rb",                -- fnamemodify(bufname, ":t")
   cwd      = "/repo",                      -- vim.fn.getcwd()
 
-  has_file = function(name) ... end,       -- exists at cwd
-  find_up  = function(name) ... end,       -- walk parents from bufdir; nil or path
-  contents = function() ... end,           -- whole buffer as a string;
+  has_file      = function(name) ... end,  -- exists at cwd
+  find_ancestor = function(name) ... end,  -- walk parents from bufdir; nil or path
+  contents      = function() ... end,      -- whole buffer as a string;
                                            -- lazy + memoized on this ctx
 }
 ```
@@ -59,10 +59,10 @@ Helper semantics:
 
 - `has_file(name)` — `vim.fn.filereadable(cwd .. "/" .. name) == 1`. Single check
   against nvim's cwd. Used when the downstream tool (e.g. `make`) runs in cwd.
-- `find_up(name)` — walk from the buffer's directory toward `/`, returning the
-  first absolute path where `name` exists, else `nil`. Used when the downstream
-  tool (e.g. `cargo`, `bundle`) walks up itself, so detecting an ancestor marker
-  is the right signal.
+- `find_ancestor(name)` — walk from the buffer's directory toward `/`,
+  returning the first absolute path where `name` exists, else `nil`. Used when
+  the downstream tool (e.g. `cargo`, `bundle`) walks up itself, so detecting an
+  ancestor marker is the right signal.
 - `contents()` — `table.concat(nvim_buf_get_lines(bufnr, 0, -1, false), "\n")`,
   computed on first call and cached on the ctx instance. Lazy because most
   handlers never look at file contents; memoized because a handler that does
@@ -126,7 +126,7 @@ ruby = function(ctx)
 end,
 
 rust = function(ctx)
-  if ctx.find_up("Cargo.toml") then return "cargo test" end
+  if ctx.find_ancestor("Cargo.toml") then return "cargo test" end
 end,
 
 lua = function(ctx)
@@ -179,7 +179,7 @@ No tmux, no real buffers. Cases:
   (Makefile vs no Makefile)
 - helper behavior against a tempdir:
   - `has_file` true/false
-  - `find_up` finds at root, finds mid-walk, returns nil at filesystem root
+  - `find_ancestor` finds at root, finds mid-walk, returns nil at filesystem root
   - `contents` lazy (not invoked unless handler calls it), memoized (single
     underlying read), returns expected string
 
