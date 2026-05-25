@@ -95,6 +95,24 @@ function M._prompt_termination_choice()
   else return "cancel" end
 end
 
+-- Pure resolver for the guess_command pipeline. Takes a ctx table and a
+-- guess_command config table, returns the resolved prefill (string).
+-- Falls back to "" only if neither the filetype handler nor `default`
+-- produces a non-nil string.
+function M._resolve_prefill(ctx, guess_command)
+  local handler = guess_command[ctx.filetype]
+  if type(handler) == "function" then
+    local result = handler(ctx)
+    if type(result) == "string" then return result end
+  end
+  local default = guess_command.default
+  if type(default) == "function" then
+    local result = default(ctx)
+    if type(result) == "string" then return result end
+  end
+  return ""
+end
+
 local function shell_is_foreground(pane_id)
   local pane_pid = M._pane_pid(pane_id)
   if not pane_pid then return false end
