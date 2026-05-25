@@ -176,4 +176,25 @@ describe("popup-shell command input", function()
     session:send_keys_to_popup("C-c")
     assert.is_true(session:wait_for_no_popup_session())
   end)
+
+  it("sources ~/.profile when neither ~/.bash_profile nor ~/.bash_login exists", function()
+    activate_paneity()
+
+    session:send_keys("Space t c")
+    assert.is_true(session:wait_for_popup_session(),
+      "expected popup session within 3s")
+    assert.is_true(session:wait_for_popup_prompt(),
+      "expected popup bash prompt within 5s")
+
+    -- Fixture ~/.profile sets PANEITY_PROFILE_LOADED=yes, and
+    -- ~/.bashrc embeds that variable into PS1. So a popup that
+    -- sourced ~/.profile shows "yes_paneity_test>" at its prompt;
+    -- one that didn't shows "no_paneity_test>".
+    local popup_text = session:popup_pane_text()
+    assert.is_truthy(popup_text:find("yes_paneity_test>", 1, true),
+      "expected ~/.profile to be sourced (PS1 prefix 'yes_'); got: " .. popup_text)
+
+    session:send_keys_to_popup("C-c")
+    assert.is_true(session:wait_for_no_popup_session())
+  end)
 end)
