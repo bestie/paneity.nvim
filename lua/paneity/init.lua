@@ -126,7 +126,19 @@ function M._build_ctx(bufnr)
     has_file = function(name)
       return vim.fn.filereadable(cwd .. "/" .. name) == 1
     end,
-    find_ancestor = function(_) return nil end,
+    find_ancestor = function(name)
+      local dir = vim.fn.fnamemodify(bufname, ":p:h")
+      while dir and dir ~= "" do
+        local candidate = dir .. "/" .. name
+        if vim.fn.filereadable(candidate) == 1 or vim.fn.isdirectory(candidate) == 1 then
+          return candidate
+        end
+        local parent = vim.fn.fnamemodify(dir, ":h")
+        if parent == dir then return nil end
+        dir = parent
+      end
+      return nil
+    end,
     contents      = function() return "" end,
   }
 end
