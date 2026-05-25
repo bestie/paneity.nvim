@@ -13,4 +13,14 @@ function M.default(ctx)
   return ctx.relpath
 end
 
+function M.ruby(ctx)
+  if ctx.relpath:match("_spec%.rb$") or ctx.relpath:match("^spec/") or ctx.relpath:match("/spec/") then
+    return "bundle exec rspec " .. ctx.relpath
+  end
+  if ctx.relpath:match("_test%.rb$") or ctx.relpath:match("^test/") or ctx.relpath:match("/test/") then
+    return "bundle exec rake test TEST=" .. ctx.relpath
+  end
+  return "ruby " .. ctx.relpath
+end
+
 return M

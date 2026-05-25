@@ -265,5 +265,41 @@ describe("guess_command (unit)", function()
         assert.are.equal("src/foo.txt", defaults.default(ctx_with(false)))
       end)
     end)
+
+    describe("ruby handler", function()
+      local function ctx_with(relpath)
+        return { relpath = relpath }
+      end
+
+      it("uses rspec for *_spec.rb", function()
+        assert.are.equal(
+          "bundle exec rspec spec/models/user_spec.rb",
+          defaults.ruby(ctx_with("spec/models/user_spec.rb")))
+      end)
+
+      it("uses rspec for any file under /spec/", function()
+        assert.are.equal(
+          "bundle exec rspec spec/support/helper.rb",
+          defaults.ruby(ctx_with("spec/support/helper.rb")))
+      end)
+
+      it("uses rake test for *_test.rb", function()
+        assert.are.equal(
+          "bundle exec rake test TEST=test/models/user_test.rb",
+          defaults.ruby(ctx_with("test/models/user_test.rb")))
+      end)
+
+      it("uses rake test for any file under /test/", function()
+        assert.are.equal(
+          "bundle exec rake test TEST=test/support/helper.rb",
+          defaults.ruby(ctx_with("test/support/helper.rb")))
+      end)
+
+      it("falls back to `ruby <relpath>` for non-test files", function()
+        assert.are.equal(
+          "ruby app/models/user.rb",
+          defaults.ruby(ctx_with("app/models/user.rb")))
+      end)
+    end)
   end)
 end)
