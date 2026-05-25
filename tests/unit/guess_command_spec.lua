@@ -190,4 +190,54 @@ describe("guess_command (unit)", function()
       vim.api.nvim_buf_get_lines = orig
     end)
   end)
+
+  describe("default_prefill via guess_command", function()
+    local buf, prev_cwd
+
+    before_each(function()
+      prev_cwd = vim.fn.getcwd()
+      local tmpdir = vim.fn.tempname()
+      vim.fn.mkdir(tmpdir, "p")
+      vim.cmd("cd " .. vim.fn.fnameescape(tmpdir))
+
+      buf = vim.api.nvim_create_buf(false, false)
+      vim.api.nvim_buf_set_name(buf, tmpdir .. "/foo.rb")
+      vim.bo[buf].filetype = "ruby"
+      vim.api.nvim_set_current_buf(buf)
+    end)
+
+    after_each(function()
+      vim.cmd("cd " .. vim.fn.fnameescape(prev_cwd))
+      vim.api.nvim_buf_delete(buf, { force = true })
+    end)
+
+    it("uses the ruby handler when configured", function()
+      paneity.setup({
+        keybindings = false,
+        guess_command = {
+          ruby = function(ctx) return "rspec " .. ctx.relpath end,
+        },
+      })
+      paneity.target_pane_id = "%99"  -- enable new_command path
+      local got
+      paneity.run = function(cmd) got = cmd end
+      require("paneity.shells").bash = {
+        get_command = function(prefill, _) got = prefill end,
+      }
+      paneity.new_command({})
+      assert.are.equal("rspec foo.rb", got)
+    end)
+
+    it("returns ctx.relpath via the shipped default when no handler matches", function()
+      paneity.setup({ keybindings = false })
+      paneity.target_pane_id = "%99"
+      local got
+      require("paneity.shells").bash = {
+        get_command = function(prefill, _) got = prefill end,
+      }
+      vim.bo[buf].filetype = "klingon"
+      paneity.new_command({})
+      assert.are.equal("foo.rb", got)
+    end)
+  end)
 end)

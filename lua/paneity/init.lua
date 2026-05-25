@@ -493,7 +493,8 @@ local function default_prefill()
   if vim.bo.buftype ~= "" then return "" end
   local name = vim.api.nvim_buf_get_name(0)
   if name == "" then return "" end
-  return vim.fn.fnamemodify(name, ":.")
+  local ctx = M._build_ctx(0)
+  return M._resolve_prefill(ctx, M.config.guess_command)
 end
 
 function M.new_command(opts)
@@ -543,6 +544,9 @@ M.defaults = {
     key_sequence    = { "C-c", "C-\\" },
     send_term       = true,
     step_timeout_ms = 200,
+  },
+  guess_command = {
+    default = function(ctx) return ctx.relpath end,
   },
   keybindings = {
     toggle = "<leader>tp",
