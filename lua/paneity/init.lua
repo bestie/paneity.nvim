@@ -545,9 +545,7 @@ M.defaults = {
     send_term       = true,
     step_timeout_ms = 200,
   },
-  guess_command = {
-    default = function(ctx) return ctx.relpath end,
-  },
+  guess_command = require("paneity.guess_command"),
   keybindings = {
     toggle = "<leader>tp",
     repeat_command = "<leader><leader>",

@@ -26,6 +26,8 @@ describe("popup-shell command input", function()
 
     -- Inner nvim runs with HOME pointed at the fixture so the popup's
     -- bash sources our known .bashrc (PS1, PANEITY_TEST_MARKER, ptest).
+    -- cd into the tmpdir so vim.fn.getcwd() returns tmpdir (no Makefile),
+    -- allowing default_prefill to return relpath, not "make".
     session:start_nvim({
       file = sample_file,
       init_lines = {
@@ -33,6 +35,7 @@ describe("popup-shell command input", function()
         "vim.env.XDG_DATA_HOME = " .. string.format("%q", session.tmpdir .. "/xdg"),
         string.format("vim.opt.runtimepath:prepend(%q)", REPO_ROOT),
         "vim.g.mapleader = ' '",
+        string.format("vim.cmd('cd %s')", vim.fn.fnameescape(session.tmpdir)),
         "require('paneity').setup({})",
       },
     })

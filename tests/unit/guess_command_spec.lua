@@ -240,4 +240,30 @@ describe("guess_command (unit)", function()
       assert.are.equal("foo.rb", got)
     end)
   end)
+
+  describe("shipped defaults", function()
+    local defaults
+
+    before_each(function()
+      package.loaded["paneity.guess_command"] = nil
+      defaults = require("paneity.guess_command")
+    end)
+
+    describe("default handler", function()
+      local function ctx_with(makefile_present, relpath)
+        return {
+          relpath  = relpath or "src/foo.txt",
+          has_file = function(name) return makefile_present and name == "Makefile" end,
+        }
+      end
+
+      it("returns 'make' when a Makefile is at cwd", function()
+        assert.are.equal("make", defaults.default(ctx_with(true)))
+      end)
+
+      it("falls back to relpath when there is no Makefile", function()
+        assert.are.equal("src/foo.txt", defaults.default(ctx_with(false)))
+      end)
+    end)
+  end)
 end)
