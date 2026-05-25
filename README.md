@@ -45,6 +45,79 @@ The popup sources your normal shell init (`~/.bashrc`, etc.) so aliases and comp
 
 `opts.prompt` was removed in this release; the popup shows the user's own bash prompt (`PS1`) instead of a configurable label.
 
+## Guessing the command (`guess_command`)
+
+Paneity tries to prefill the popup with something useful based on the active
+buffer's filetype. The shipped defaults cover a small set of common cases:
+
+| Filetype | Behavior                                                              |
+| -------- | --------------------------------------------------------------------- |
+| `ruby`   | `bundle exec rspec <path>` for `*_spec.rb` or files under `/spec/`; `bundle exec rake test TEST=<path>` for `*_test.rb` or files under `/test/`; otherwise `ruby <path>` |
+| `rust`   | `cargo test` when `Cargo.toml` is found in any ancestor directory     |
+| `lua`    | `make test` when editing `*_spec.lua` and a `Makefile` exists at cwd  |
+| _other_  | The `default` handler: `make` if a `Makefile` exists at cwd; otherwise the file's path relative to nvim's cwd |
+
+Override any of these — or add a handler for a filetype paneity doesn't ship:
+
+```lua
+require("paneity").setup({
+  guess_command = {
+    -- Custom handler for python
+    python = function(ctx)
+      if ctx.basename:match("^test_") then
+        return "pytest " .. ctx.relpath
+      end
+      return "python " .. ctx.relpath
+    end,
+
+    -- Disable the shipped ruby handler entirely
+    ruby = false,
+
+    -- Compose with the shipped default
+    rust = function(ctx)
+      if ctx.has_file("justfile") then return "just test" end
+      return require("paneity").defaults.guess_command.rust(ctx)
+    end,
+  },
+})
+```
+
+### The `ctx` table
+
+Each handler receives a `ctx` table:
+
+```lua
+ctx = {
+  filetype = "ruby",                       -- vim.bo.filetype
+  bufname  = "/repo/spec/foo_spec.rb",     -- absolute path
+  relpath  = "spec/foo_spec.rb",           -- relative to nvim's cwd
+  basename = "foo_spec.rb",
+  cwd      = "/repo",
+
+  has_file      = function(name) ... end,  -- true if <cwd>/<name> exists
+  find_ancestor = function(name) ... end,  -- walk parents from buf dir;
+                                           -- returns absolute path or nil
+  contents      = function()     ... end,  -- whole buffer as string;
+                                           -- lazy, memoized
+}
+```
+
+`has_file` vs `find_ancestor`: use `has_file` when the downstream tool runs in
+cwd (like `make`). Use `find_ancestor` when the downstream tool walks up itself
+(like `cargo` or `bundle`) — finding a marker anywhere upstream means the
+tool will find its own root.
+
+### Resolution order
+
+1. Non-file buffers (`buftype ~= ""`) and unnamed buffers → no prefill.
+2. Otherwise the resolver looks up `guess_command[<filetype>]`. If it's a
+   function returning a string, that's the prefill.
+3. Otherwise `guess_command.default(ctx)` runs.
+4. If `default` returns nil, the prefill is empty.
+
+A handler set to `false` is treated as "disabled" — the resolver skips it and
+falls straight to `default`.
+
 ## Requirements
 
 - [Neovim](https://github.com/neovim/neovim) 0.8+
