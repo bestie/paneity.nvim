@@ -139,7 +139,16 @@ function M._build_ctx(bufnr)
       end
       return nil
     end,
-    contents      = function() return "" end,
+    contents = (function()
+      local cached
+      return function()
+        if cached == nil then
+          cached = table.concat(
+            vim.api.nvim_buf_get_lines(bufnr, 0, -1, false), "\n")
+        end
+        return cached
+      end
+    end)(),
   }
 end
 

@@ -150,5 +150,44 @@ describe("guess_command (unit)", function()
       local ctx = paneity._build_ctx(buf)
       assert.is_nil(ctx.find_ancestor("__definitely_not_there__"))
     end)
+
+    it("contents returns buffer text joined by newline", function()
+      local ctx = paneity._build_ctx(buf)
+      assert.are.equal("describe 'foo' do\nend", ctx.contents())
+    end)
+
+    it("contents is lazy — does not read the buffer until called", function()
+      -- Replace nvim_buf_get_lines so we can detect any read at build time.
+      local orig = vim.api.nvim_buf_get_lines
+      local reads = 0
+      vim.api.nvim_buf_get_lines = function(...)
+        reads = reads + 1
+        return orig(...)
+      end
+
+      local ctx = paneity._build_ctx(buf)
+      assert.are.equal(0, reads)
+      ctx.contents()
+      assert.are.equal(1, reads)
+
+      vim.api.nvim_buf_get_lines = orig
+    end)
+
+    it("contents memoizes — repeated calls only read once", function()
+      local orig = vim.api.nvim_buf_get_lines
+      local reads = 0
+      vim.api.nvim_buf_get_lines = function(...)
+        reads = reads + 1
+        return orig(...)
+      end
+
+      local ctx = paneity._build_ctx(buf)
+      ctx.contents()
+      ctx.contents()
+      ctx.contents()
+      assert.are.equal(1, reads)
+
+      vim.api.nvim_buf_get_lines = orig
+    end)
   end)
 end)
