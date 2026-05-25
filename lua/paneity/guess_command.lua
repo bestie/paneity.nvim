@@ -23,4 +23,8 @@ function M.ruby(ctx)
   return "ruby " .. ctx.relpath
 end
 
+function M.rust(ctx)
+  if ctx.find_ancestor("Cargo.toml") then return "cargo test" end
+end
+
 return M

@@ -301,5 +301,25 @@ describe("guess_command (unit)", function()
           defaults.ruby(ctx_with("app/models/user.rb")))
       end)
     end)
+
+    describe("rust handler", function()
+      it("returns 'cargo test' when Cargo.toml is in the ancestor chain", function()
+        local ctx = {
+          relpath = "src/lib.rs",
+          find_ancestor = function(name)
+            if name == "Cargo.toml" then return "/repo/Cargo.toml" end
+          end,
+        }
+        assert.are.equal("cargo test", defaults.rust(ctx))
+      end)
+
+      it("returns nil when Cargo.toml is absent", function()
+        local ctx = {
+          relpath = "scratch.rs",
+          find_ancestor = function() return nil end,
+        }
+        assert.is_nil(defaults.rust(ctx))
+      end)
+    end)
   end)
 end)
