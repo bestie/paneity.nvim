@@ -76,6 +76,14 @@ function M.start(opts)
   tmux_cmd(string.format(
     "new-session -d -s %s -x %d -y %d", name, width, height))
 
+  -- Force non-zero base-index / pane-base-index on the test server so
+  -- any session created AFTER this point (notably the paneity popup
+  -- helper) gets its first window/pane at index 1, not 0. This
+  -- reproduces user environments where those options are set, and
+  -- regression-tests any code path that would hardcode `:0.0`.
+  tmux_cmd("set-option -g base-index 1")
+  tmux_cmd("set-option -g pane-base-index 1")
+
   local session = { name = name, tmpdir = tmpdir, saved_lc_all = saved_lc_all }
 
   -- Absolute path inside this session's private tmpdir.
@@ -124,19 +132,21 @@ function M.start(opts)
     end, 50)
   end
 
-  -- Capture-pane on the popup helper session's only pane.
+  -- Capture-pane on the popup helper session's active pane. Targeting
+  -- just the session name (no `:0.0`) lets tmux resolve to the active
+  -- pane regardless of base-index / pane-base-index.
   function session:popup_pane_text()
     local name = self:popup_session_name()
     if not name then return "" end
     return tmux_cmd(string.format(
-      "capture-pane -t %s:0.0 -p", name))
+      "capture-pane -t %s -p", name))
   end
 
   function session:send_keys_to_popup(payload)
     local name = self:popup_session_name()
     assert(name, "send_keys_to_popup: no popup session is active")
     tmux_cmd(string.format(
-      "send-keys -t %s:0.0 %s", name, payload))
+      "send-keys -t %s %s", name, payload))
   end
 
   function session:wait_for_popup_prompt(timeout_ms)
