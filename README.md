@@ -39,8 +39,9 @@ The popup sources your normal shell init (`~/.bashrc`, etc.) so aliases and comp
 `M.new_command(opts)` accepts:
 
 - `prefill` (`string | nil`) — initial content of the popup's command line.
-  `nil` (the default) uses the active buffer's file path relative to nvim's cwd, or
-  an empty string for non-file buffers. Pass `""` to explicitly suppress the default.
+  `nil` (the default) routes through the `guess_command` pipeline — see
+  [Guessing the command](#guessing-the-command-guess_command) below. Pass `""` to
+  explicitly suppress the default (empty popup).
 - `post_exec` (`function | nil`) — called with the captured command string after `M.run` returns.
 
 `opts.prompt` was removed in this release; the popup shows the user's own bash prompt (`PS1`) instead of a configurable label.
