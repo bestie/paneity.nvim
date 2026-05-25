@@ -20,9 +20,9 @@ M._active_session = nil
 -- the function in the current shell, so `exit 0` from __paneity_capture
 -- terminates bash before any command parsing happens.
 local RCFILE = [=[
-[ -r /etc/profile ]    && . /etc/profile
-[ -r ~/.bash_profile ] && . ~/.bash_profile
-[ -r ~/.bashrc ]       && . ~/.bashrc
+[ -r /etc/bash.bashrc ] && . /etc/bash.bashrc
+[ -r /etc/bashrc ]      && . /etc/bashrc
+[ -r ~/.bashrc ]        && . ~/.bashrc
 
 cd "$PANEITY_CWD" 2>/dev/null || true
 
@@ -123,7 +123,7 @@ function M.get_command(prefill, cb)
   -- Detached single-pane session running bash. The session is the
   -- popup's addressable handle; when bash exits the session dies.
   local _, code = tmux(string.format(
-    "new-session -d -s %s -x 200 -y 50 %s bash --rcfile %s",
+    "new-session -d -s %s -x 200 -y 50 %s bash --rcfile %s -i",
     shesc(session_name), env_flags, shesc(rcfile_path)))
 
   if code ~= 0 then
