@@ -30,11 +30,10 @@ describe("guess_command (integration)", function()
       init_lines = {
         "vim.env.HOME = " .. string.format("%q", POPUP_HOME),
         "vim.env.XDG_DATA_HOME = " .. string.format("%q", session.tmpdir .. "/xdg"),
-        "vim.cmd('cd " .. session.tmpdir .. "')",
+        string.format("vim.cmd('cd %s')", vim.fn.fnameescape(session.tmpdir)),
         string.format("vim.opt.runtimepath:prepend(%q)", REPO_ROOT),
         "vim.g.mapleader = ' '",
         "require('paneity').setup({})",
-        "vim.bo.filetype = 'ruby'",
       },
     })
   end)
