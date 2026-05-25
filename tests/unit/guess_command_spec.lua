@@ -321,5 +321,31 @@ describe("guess_command (unit)", function()
         assert.is_nil(defaults.rust(ctx))
       end)
     end)
+
+    describe("lua handler", function()
+      it("returns 'make test' for *_spec.lua with a Makefile at cwd", function()
+        local ctx = {
+          relpath  = "tests/unit/foo_spec.lua",
+          has_file = function(name) return name == "Makefile" end,
+        }
+        assert.are.equal("make test", defaults.lua(ctx))
+      end)
+
+      it("returns nil for *_spec.lua without a Makefile", function()
+        local ctx = {
+          relpath  = "tests/unit/foo_spec.lua",
+          has_file = function() return false end,
+        }
+        assert.is_nil(defaults.lua(ctx))
+      end)
+
+      it("returns nil for non-spec lua files", function()
+        local ctx = {
+          relpath  = "lua/paneity/init.lua",
+          has_file = function(name) return name == "Makefile" end,
+        }
+        assert.is_nil(defaults.lua(ctx))
+      end)
+    end)
   end)
 end)

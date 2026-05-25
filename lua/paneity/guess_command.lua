@@ -27,4 +27,10 @@ function M.rust(ctx)
   if ctx.find_ancestor("Cargo.toml") then return "cargo test" end
 end
 
+function M.lua(ctx)
+  if ctx.relpath:match("_spec%.lua$") and ctx.has_file("Makefile") then
+    return "make test"
+  end
+end
+
 return M
