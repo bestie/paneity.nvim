@@ -164,6 +164,11 @@ function M.start(opts)
       "display -p -t %s '#{pane_current_command}'", pane_id))
   end
 
+  function session:pane_current_path(pane_id)
+    return tmux_cmd(string.format(
+      "display -p -t %s '#{pane_current_path}'", pane_id))
+  end
+
   -- Per-pane pane-border-format option as tmux reports it (raw output
   -- of `show-options -p`, i.e. `pane-border-format "<value>"`). Used
   -- by tests that need to assert paneity's marker is applied to (or

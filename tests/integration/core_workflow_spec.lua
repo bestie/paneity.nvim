@@ -115,6 +115,19 @@ describe("core workflow", function()
     assert.is_truthy(border:find(PANEITY_MARKER, 1, true),
       "expected marker in pane-border-format; got: " .. border)
 
+    -- open_new_pane passes `-c "$(pwd)"`, so the new pane should
+    -- start in the same working directory as the nvim that spawned
+    -- it. The shell in the new pane may still be initializing right
+    -- after split-window returns, so poll until the path settles.
+    local nvim_cwd = session:pane_current_path(session.nvim_pane_id)
+    assert.is_true(nvim_cwd ~= "",
+      "precondition: nvim pane should report a current path")
+    assert.is_true(wait.until_true(function()
+      return session:pane_current_path(target) == nvim_cwd
+    end, 2000),
+      "expected new pane CWD to match nvim's (" .. nvim_cwd ..
+      "); got: " .. session:pane_current_path(target))
+
     local token = fs.random_token()
     set_and_run(string.format("echo %s >> %s", token, log_file))
     wait_for_log_lines(1)
