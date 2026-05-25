@@ -123,7 +123,9 @@ function M._build_ctx(bufnr)
     relpath  = vim.fn.fnamemodify(bufname, ":."),
     basename = vim.fn.fnamemodify(bufname, ":t"),
     cwd      = cwd,
-    has_file      = function(_) return false end,
+    has_file = function(name)
+      return vim.fn.filereadable(cwd .. "/" .. name) == 1
+    end,
     find_ancestor = function(_) return nil end,
     contents      = function() return "" end,
   }
