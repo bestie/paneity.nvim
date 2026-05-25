@@ -33,6 +33,9 @@ describe("popup-shell command input", function()
         "vim.env.XDG_DATA_HOME = " .. string.format("%q", session.tmpdir .. "/xdg"),
         string.format("vim.opt.runtimepath:prepend(%q)", REPO_ROOT),
         "vim.g.mapleader = ' '",
+        -- Set cwd to the tmpdir so that :. resolves sample.txt to its
+        -- bare basename (used by the strict prefill placement test).
+        string.format("vim.cmd('cd %s')", session.tmpdir:gsub(" ", "\\ ")),
         "require('paneity').setup({})",
       },
     })
@@ -173,6 +176,50 @@ describe("popup-shell command input", function()
       "expected empty input after prompt; got last line: " .. tostring(last))
 
     -- Clean up: cancel the popup so after_each can destroy the session.
+    session:send_keys_to_popup("C-c")
+    assert.is_true(session:wait_for_no_popup_session())
+  end)
+
+  it("places the default prefill exactly at the prompt position", function()
+    activate_paneity()
+
+    session:send_keys("Space t c")
+    assert.is_true(session:wait_for_popup_session(),
+      "expected popup session within 3s")
+    assert.is_true(session:wait_for_popup_prompt(),
+      "expected popup bash prompt within 5s")
+
+    -- The default prefill is the active buffer's relative path. In
+    -- this spec the buffer is sample.txt (set in before_each via
+    -- start_nvim({ file = sample_file })), so the prefill is the
+    -- file name (sample.txt) -- nvim's cwd is wherever it was
+    -- launched from, so :. resolves to the bare basename.
+    --
+    -- Strict assertion: the last non-blank line of the popup pane
+    -- must be exactly "<PS1><prefill>" with the cursor at end.
+    -- This rules out the case where the file path appears
+    -- incidentally somewhere in the pane (scrollback, etc.).
+    --
+    -- We poll because the prefill is delivered asynchronously by a
+    -- timer that fires after PROMPT_COMMAND signals readiness.
+    local last_line
+    local matched = vim.wait(3000, function()
+      local text = session:popup_pane_text()
+      last_line = nil
+      for line in (text .. "\n"):gmatch("([^\n]*)\n") do
+        if line:match("%S") then last_line = line end
+      end
+      if not last_line then return false end
+      -- Trim trailing whitespace, then check for the literal pair.
+      local trimmed = last_line:gsub("%s+$", "")
+      return trimmed == "paneity_test> sample.txt"
+    end, 50)
+
+    assert.is_true(matched,
+      "expected last popup line to be exactly 'paneity_test> sample.txt'; "
+      .. "got: " .. tostring(last_line))
+
+    -- Cancel so after_each can tear down cleanly.
     session:send_keys_to_popup("C-c")
     assert.is_true(session:wait_for_no_popup_session())
   end)
