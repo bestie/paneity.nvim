@@ -45,6 +45,12 @@ bind -x '"\C-j": __paneity_capture'
 
 trap 'exit 130' INT
 
+__paneity_prefill_now() {
+  READLINE_LINE="$PANEITY_PREFILL"
+  READLINE_POINT=${#PANEITY_PREFILL}
+}
+bind -x '"\C-x\C-p": __paneity_prefill_now'
+
 __paneity_signal_ready() {
   if [ -z "$_paneity_ready_sent" ]; then
     : > "$PANEITY_READY"
@@ -114,6 +120,7 @@ function M.get_command(prefill, cb)
   -- a different HOME (common in tests that redirect HOME to a fixture dir).
   local env_flags = table.concat({
     "-e HOME="             .. shesc(vim.env.HOME or ""),
+    "-e PANEITY_PREFILL="  .. shesc(prefill or ""),
     "-e PANEITY_CAPTURE="  .. shesc(capture_path),
     "-e PANEITY_HISTFILE=" .. shesc(histfile),
     "-e PANEITY_READY="    .. shesc(ready_path),
@@ -192,12 +199,10 @@ function M.get_command(prefill, cb)
     original_cleanup(captured)
   end
 
-  -- Prefill: poll for the ready marker, then type the prefill text
-  -- directly into the helper session. PROMPT_COMMAND writes the ready
-  -- file before readline starts, so the literal characters arrive at
-  -- an idle prompt. -l makes send-keys treat the argument as a literal
-  -- string to type rather than tmux key names; each char self-inserts
-  -- via readline with no bind, no chord, no INPUTRC dependency.
+  -- Prefill: poll for the ready marker, then send the trigger key to
+  -- the helper session. PROMPT_COMMAND writes the ready file before
+  -- readline starts, so the keystroke lands inside the bind -x handler
+  -- which populates READLINE_LINE from $PANEITY_PREFILL.
   if prefill and prefill ~= "" then
     local prefill_timer = uv.new_timer()
     prefill_timer:start(25, 25, vim.schedule_wrap(function()
@@ -206,8 +211,7 @@ function M.get_command(prefill, cb)
           pcall(function() prefill_timer:stop(); prefill_timer:close() end)
         end
         tmux(string.format(
-          "send-keys -t %s:0.0 -l %s",
-          shesc(session_name), shesc(prefill)))
+          "send-keys -t %s:0.0 C-x C-p", shesc(session_name)))
       end
     end))
     -- Stop prefill timer if cleanup runs before ready fires.
