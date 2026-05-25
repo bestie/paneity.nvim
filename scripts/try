@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+#
+# scripts/try — launch nvim with paneity loaded, inside a tmux session,
+# using the developer's actual shell (~/.bashrc, oh-my-bash, whatever).
+#
+# Run from anywhere: bash path/to/scripts/try [file-to-open]
+#
+# If you're already in tmux, opens nvim in the current pane.
+# If not, starts a new tmux session named "paneity-try".
+
+set -euo pipefail
+
+REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+INIT="$REPO/scripts/try-init.lua"
+FILE="${1:-$REPO/README.md}"
+
+if [ -z "${TMUX:-}" ]; then
+  echo "Starting tmux session 'paneity-try'..."
+  echo "Press <Space>tp to pick/create a target pane, <Space>tc for the popup."
+  echo "Detach with C-b d. Re-attach with: tmux attach -t paneity-try"
+  exec tmux new-session -A -s paneity-try "nvim --clean -u '$INIT' '$FILE'"
+else
+  exec nvim --clean -u "$INIT" "$FILE"
+fi

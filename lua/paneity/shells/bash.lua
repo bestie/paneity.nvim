@@ -114,6 +114,20 @@ local function shesc(s)
   return vim.fn.shellescape(s or "")
 end
 
+-- Append a timestamped line to /tmp/paneity.log when the user has
+-- enabled logging via paneity.setup({ log_level = ... }). Lazy-requires
+-- paneity to avoid a load-time cycle.
+local function log(msg)
+  local ok, paneity = pcall(require, "paneity")
+  if not ok or not paneity.config then return end
+  if paneity.config.log_level == vim.log.levels.OFF then return end
+  local f = io.open("/tmp/paneity.log", "a")
+  if not f then return end
+  f:write(string.format("[%s] bash.lua: %s\n",
+    os.date("%H:%M:%S"), msg))
+  f:close()
+end
+
 function M.get_command(prefill, cb)
   local session_name = "paneity-popup-" .. random_token()
   local rcfile_path  = temp_path("rcfile")
@@ -215,14 +229,26 @@ function M.get_command(prefill, cb)
   -- readline starts, so the keystroke lands inside the bind -x handler
   -- which populates READLINE_LINE from $PANEITY_PREFILL.
   if prefill and prefill ~= "" then
+    log(string.format("prefill polling start: session=%s prefill=%q ready_path=%s",
+      session_name, prefill, ready_path))
+    local prefill_tick = 0
     local prefill_timer = uv.new_timer()
     prefill_timer:start(25, 25, vim.schedule_wrap(function()
+      prefill_tick = prefill_tick + 1
       if vim.fn.filereadable(ready_path) == 1 then
+        log(string.format("prefill ready after %d ticks (~%dms); sending C-x C-p",
+          prefill_tick, prefill_tick * 25))
         if not prefill_timer:is_closing() then
           pcall(function() prefill_timer:stop(); prefill_timer:close() end)
         end
-        tmux(string.format(
-          "send-keys -t %s:0.0 C-x C-p", shesc(session_name)))
+        local cmd = string.format(
+          "send-keys -t %s:0.0 C-x C-p", shesc(session_name))
+        local out, code = tmux(cmd)
+        log(string.format("send-keys exit=%d out=%q", code or -1, (out or ""):gsub("\n", "\\n")))
+      elseif prefill_tick % 20 == 0 then
+        -- Every ~500ms, log that polling is alive but no ready file yet.
+        log(string.format("prefill polling tick=%d (~%dms), no ready file at %s",
+          prefill_tick, prefill_tick * 25, ready_path))
       end
     end))
     -- Stop prefill timer if cleanup runs before ready fires.
