@@ -289,7 +289,7 @@ local function fzf_selection_ui(prompt, menu_items, on_selection)
       ["--bind"] = "start:down",  -- doesn't work, bind option not passed through
     },
     winopts = {
-      height = #menu_items + 3,
+      height = math.max(#menu_items, 3) + 3,
       row = 1,    -- bottom
       col = 4,    -- characters
       width = 50, -- characters
