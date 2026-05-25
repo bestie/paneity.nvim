@@ -113,6 +113,22 @@ function M._resolve_prefill(ctx, guess_command)
   return ""
 end
 
+function M._build_ctx(bufnr)
+  bufnr = (bufnr == nil or bufnr == 0) and vim.api.nvim_get_current_buf() or bufnr
+  local bufname = vim.api.nvim_buf_get_name(bufnr)
+  local cwd = vim.fn.getcwd()
+  return {
+    filetype = vim.bo[bufnr].filetype,
+    bufname  = bufname,
+    relpath  = vim.fn.fnamemodify(bufname, ":."),
+    basename = vim.fn.fnamemodify(bufname, ":t"),
+    cwd      = cwd,
+    has_file      = function(_) return false end,
+    find_ancestor = function(_) return nil end,
+    contents      = function() return "" end,
+  }
+end
+
 local function shell_is_foreground(pane_id)
   local pane_pid = M._pane_pid(pane_id)
   if not pane_pid then return false end

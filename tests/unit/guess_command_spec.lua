@@ -80,4 +80,35 @@ describe("guess_command (unit)", function()
       assert.are.equal("x/y.rb", seen.relpath)
     end)
   end)
+
+  describe("_build_ctx", function()
+    local buf, prev_cwd
+
+    before_each(function()
+      prev_cwd = vim.fn.getcwd()
+      local tmpdir = vim.fn.tempname()
+      vim.fn.mkdir(tmpdir .. "/spec", "p")
+      vim.cmd("cd " .. vim.fn.fnameescape(tmpdir))
+
+      buf = vim.api.nvim_create_buf(false, false)
+      vim.api.nvim_buf_set_name(buf, tmpdir .. "/spec/foo_spec.rb")
+      vim.api.nvim_buf_set_lines(buf, 0, -1, false, { "describe 'foo' do", "end" })
+      vim.bo[buf].filetype = "ruby"
+      vim.api.nvim_set_current_buf(buf)
+    end)
+
+    after_each(function()
+      vim.cmd("cd " .. vim.fn.fnameescape(prev_cwd))
+      vim.api.nvim_buf_delete(buf, { force = true })
+    end)
+
+    it("populates filetype, bufname, relpath, basename, cwd", function()
+      local ctx = paneity._build_ctx(buf)
+      assert.are.equal("ruby", ctx.filetype)
+      assert.are.equal(vim.fn.getcwd() .. "/spec/foo_spec.rb", ctx.bufname)
+      assert.are.equal("spec/foo_spec.rb", ctx.relpath)
+      assert.are.equal("foo_spec.rb", ctx.basename)
+      assert.are.equal(vim.fn.getcwd(), ctx.cwd)
+    end)
+  end)
 end)
