@@ -241,8 +241,11 @@ function M.get_command(prefill, cb)
         if not prefill_timer:is_closing() then
           pcall(function() prefill_timer:stop(); prefill_timer:close() end)
         end
+        -- Target just the session name; tmux resolves it to the
+        -- session's active pane. Hard-coding :0.0 fails for users who
+        -- have base-index / pane-base-index set to non-zero values.
         local cmd = string.format(
-          "send-keys -t %s:0.0 C-x C-p", shesc(session_name))
+          "send-keys -t %s C-x C-p", shesc(session_name))
         local out, code = tmux(cmd)
         log(string.format("send-keys exit=%d out=%q", code or -1, (out or ""):gsub("\n", "\\n")))
       elseif prefill_tick % 20 == 0 then
